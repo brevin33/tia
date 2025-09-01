@@ -6,3 +6,4 @@ build
 compile_commands.json
 project.rad
 .cache/*
+.cache
