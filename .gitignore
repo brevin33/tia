@@ -1,0 +1,7 @@
+
+out/*
+out
+build/*
+build
+compile_commands.json
+project.rad

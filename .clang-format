@@ -1,0 +1,9 @@
+BasedOnStyle: Google
+AllowShortIfStatementsOnASingleLine: Always
+ColumnLimit: 0 
+ReflowComments: false
+SortIncludes: false
+IndentCaseLabels: true 
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
