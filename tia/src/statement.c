@@ -56,6 +56,17 @@ Statement statement_create_assignment(Ast* ast, Scope* scope, Function* function
             assignee.is_variable_declaration = false;
             Ast* expression_ast = assignee_ast->expression;
             Expression expression = expression_create(expression_ast, scope);
+            if (expression.expr_type == et_invalid) {
+                Statement err = {0};
+                return err;
+            }
+            Type* expression_type = &expression.type;
+            Type_Type expression_type_type = type_get_type(expression_type);
+            if (expression_type_type != type_ref) {
+                log_error_ast(expression_ast, "Can't assign to non type");
+                Statement err = {0};
+                return err;
+            }
             assignee.expression = alloc(sizeof(Expression));
             *assignee.expression = expression;
         }
@@ -80,8 +91,13 @@ Statement statement_create_assignment(Ast* ast, Scope* scope, Function* function
                 return err;
             }
             for (u64 i = 0; i < multi_expression->expressions.count; i++) {
-                Type* assignee_type = statement_get_assignee_type(assignees_list_get(&assignees, i));
-                Expression value_expression = expression_implicitly_cast(&multi_expression->expressions.data[i], assignee_type);
+                Assignee* assignee = assignees_list_get(&assignees, i);
+                Type assignee_type = *statement_get_assignee_type(assignee);
+                if (assignee->is_variable_declaration) {
+                    Type ref_type = type_get_reference(&assignee_type);
+                    assignee_type = ref_type;
+                }
+                Expression value_expression = expression_implicitly_cast(&multi_expression->expressions.data[i], &assignee_type);
                 if (value_expression.expr_type == et_invalid) {
                     Statement err = {0};
                     return err;
@@ -96,8 +112,10 @@ Statement statement_create_assignment(Ast* ast, Scope* scope, Function* function
                 Statement err = {0};
                 return err;
             }
-            Type* assignee_type = statement_get_assignee_type(assignees_list_get(&assignees, 0));
-            Expression value_expression = expression_implicitly_cast(&value, assignee_type);
+            Type assignee_type = *statement_get_assignee_type(assignees_list_get(&assignees, 0));
+            Type deref_type = type_deref(&assignee_type);
+            assignee_type = deref_type;
+            Expression value_expression = expression_implicitly_cast(&value, &assignee_type);
             if (value_expression.expr_type == et_invalid) {
                 Statement err = {0};
                 return err;
@@ -189,4 +207,103 @@ Type* statement_get_assignee_type(Assignee* assignee) {
     } else {
         return &assignee->expression->type;
     }
+}
+
+bool statement_compile(Statement* statement, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
+    switch (statement->type) {
+        case st_return:
+            return statement_compile_return(statement, func, scope, substitutions, var_to_llvm_val, function_value);
+        case st_ignore:
+            return false;
+        case st_assignment:
+            return statement_compile_assignment(statement, func, scope, substitutions, var_to_llvm_val, function_value);
+        case st_expression:
+            return statement_compile_expression(statement, func, scope, substitutions, var_to_llvm_val, function_value);
+        case st_scope:
+            return statement_compile_scope(statement, func, scope, substitutions, var_to_llvm_val, function_value);
+        case st_invalid:
+            massert(false, "invalid statement");
+            return false;
+    }
+}
+
+bool statement_compile_return(Statement* statement, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
+    expression_compile(&statement->return_.return_value, func, scope, substitutions, var_to_llvm_val, function_value);
+    Expression* return_value = &statement->return_.return_value;
+    LLVMBuildRet(context.llvm_info.builder, return_value->value);
+    return true;
+}
+
+bool statement_compile_assignment(Statement* statement, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
+    massert(statement->assignment.assignees.count < 512, "too many assignees");
+    for (u64 i = 0; i < statement->assignment.assignees.count; i++) {
+        Assignee* assignee = assignees_list_get(&statement->assignment.assignees, i);
+        if (assignee->is_variable_declaration) {
+            // do nothing
+        } else {
+            Expression* expression = assignee->expression;
+            expression_compile(expression, func, scope, substitutions, var_to_llvm_val, function_value);
+        }
+    }
+    expression_compile(statement->assignment.value, func, scope, substitutions, var_to_llvm_val, function_value);
+
+    if (statement->assignment.assignees.count == 1) {
+        LLVMValueRef value = statement->assignment.value->value;
+        Assignee* assignee = assignees_list_get(&statement->assignment.assignees, 0);
+        if (assignee->is_variable_declaration) {
+            Variable* variable = assignee->variable;
+            if (variable->is_ref) {
+                Variable_LLVM_Value v = {0};
+                v.variable = variable;
+                v.value = value;
+                variable_llvm_value_list_add(var_to_llvm_val, &v);
+            } else {
+                LLVMValueRef variable_value = scope_get_variable_value(var_to_llvm_val, variable);
+                LLVMBuildStore(context.llvm_info.builder, value, variable_value);
+            }
+        } else {
+            Expression* expression_assignee = assignee->expression;
+            LLVMValueRef assignee_value = expression_assignee->value;
+            LLVMBuildStore(context.llvm_info.builder, value, assignee_value);
+        }
+    } else {
+        Expression* value_expression = statement->assignment.value;
+        massert(value_expression->expr_type == et_multi_expression, "value_expression is not et_multi_expression");
+        Expression_Multi_Expression* multi_expression = &value_expression->multi_expression;
+        massert(multi_expression->expressions.count == statement->assignment.assignees.count, "multi_expression->expressions.count != statement->assignment.assignees.count");
+        for (u64 i = 0; i < multi_expression->expressions.count; i++) {
+            Assignee* assignee = assignees_list_get(&statement->assignment.assignees, i);
+            Expression* expression = expression_list_get(&multi_expression->expressions, i);
+
+            if (assignee->is_variable_declaration) {
+                Variable* variable = assignee->variable;
+                if (variable->is_ref) {
+                    Variable_LLVM_Value v = {0};
+                    v.variable = variable;
+                    v.value = expression->value;
+                    variable_llvm_value_list_add(var_to_llvm_val, &v);
+                } else {
+                    LLVMValueRef variable_value = scope_get_variable_value(var_to_llvm_val, variable);
+                    LLVMBuildStore(context.llvm_info.builder, expression->value, variable_value);
+                }
+            } else {
+                Expression* expression_assignee = assignee->expression;
+                LLVMValueRef assignee_value = expression_assignee->value;
+                LLVMValueRef expression_value = expression->value;
+                LLVMBuildStore(context.llvm_info.builder, expression_value, assignee_value);
+            }
+        }
+    }
+
+    return false;
+}
+
+bool statement_compile_expression(Statement* statement, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
+    expression_compile(&statement->expression.expression, func, scope, substitutions, var_to_llvm_val, function_value);
+    return false;
+}
+
+bool statement_compile_scope(Statement* statement, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
+    massert(false, "not implemented");
+    return false;
 }

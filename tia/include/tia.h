@@ -1,3 +1,4 @@
+#include <llvm-c/Types.h>
 #include "tia/basic.h"
 #include "tia/arena.h"
 #include "tia/lists.h"
@@ -11,6 +12,15 @@
 #include "tia/statement.h"
 #include "tia/expression.h"
 #include "tia/scope.h"
+#include "tia/llvm.h"
+
+typedef struct LLVM_Context_Info {
+    LLVMContextRef llvm_context;
+    LLVMBuilderRef builder;
+    LLVMBasicBlockRef current_block;
+    LLVMTargetDataRef data_layout;
+    LLVMModuleRef module;
+} LLVM_Context_Info;
 
 typedef struct {
     Arena* arena;
@@ -18,8 +28,14 @@ typedef struct {
     File_Pointer_List files;
     Type_Base_Pointer_List types;
     Function_Pointer_List functions;
+    i64 numberOfErrors;
+    union {
+        LLVM_Context_Info llvm_info;
+    };
 } Context;
 
 extern Context context;
 
 Folder* create_tia_project(char* path, Arena* arena);
+
+bool compile_tia_project(Folder* folder);

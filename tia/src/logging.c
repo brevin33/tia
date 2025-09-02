@@ -2,6 +2,7 @@
 #include "tia.h"
 
 static void log_error_base(const char* message, File* file, u64 line, u64 lines, u64 start_index, u64 end_index, va_list args) {
+    context.numberOfErrors++;
     char* file_contents = file->contents;
     char* file_path = file->path;
 
@@ -45,6 +46,7 @@ static void log_error_v(const char* message, va_list args) {
 }
 
 void log_error(const char* message, ...) {
+    context.numberOfErrors++;
     va_list args;
     va_start(args, message);
     red_printf("Error: ");

@@ -24,3 +24,5 @@ char* file_get_line(File* file, u64 line_number);
 u64_List file_get_line_start_indexes(File* file);
 
 u64 file_get_lines(File* file, u64 t_start_index, u64 t_end_index, u64* out_count);
+
+bool has_main_function(File* file);

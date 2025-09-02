@@ -51,6 +51,9 @@ typedef struct Expression {
         Expression_Biop biop;
         Expression_Cast cast;
     };
+    union {
+        LLVMValueRef value;
+    };
 } Expression;
 
 Expression expression_create(Ast* ast, Scope* scope);
@@ -72,3 +75,23 @@ bool expression_can_implicitly_cast(Type* expression, Type* type);
 Expression expression_implicitly_cast(Expression* expression, Type* type);
 
 Expression expression_cast(Expression* expression, Type* type);
+
+void expression_compile(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value);
+
+void expression_compile_number_literal(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value);
+
+void expression_compile_variable(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value);
+
+void expression_compile_cast(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value);
+
+typedef struct Expression_Number_Literal {
+    bool is_float;
+    union {
+        char* number;
+        double number_float;
+    };
+} Expression_Number_Literal;
+
+Expression_Number_Literal expression_get_number_literal(Expression* expression);
+
+Expression_Number_Literal expression_get_number_literal_number_literal(Expression* expression);

@@ -1,4 +1,5 @@
 #include "tia/type.h"
+#include <llvm-c/Core.h>
 #include "tia.h"
 #include "tia/lists.h"
 
@@ -11,6 +12,7 @@ void init_types() {
     u64 invalid_len = strlen(invalid);
     char* invalid_name = alloc(invalid_len + 1);
     memcpy(invalid_name, invalid, invalid_len);
+
     invalid_name[invalid_len] = '\0';
     invalid_type_base->name = invalid_name;
 
@@ -366,6 +368,74 @@ Type type_deref(Type* type) {  // pointer go to references
     }
 }
 
+Type type_get_real_type(Type* type, Type_Substitution_List* substitutions) {
+    Type_Type type_type = type->base->type;
+    switch (type_type) {
+        case type_int:
+        case type_float:
+        case type_uint: {
+            for (u64 i = 0; i < substitutions->count; i++) {
+                Type_Substitution* substitution = type_substitution_list_get(substitutions, i);
+                Type_Base* base_type = type->base;
+                Type_Base* substituted_type = substitution->substituted_type;
+                if (base_type == substituted_type) {
+                    Type new_type;
+                    new_type.modifiers = type_modifier_list_create(8);
+                    massert(type->modifiers.count == 0, "type->modifiers.count != 0");
+                    for (u64 j = 0; j < substitution->new_type.modifiers.count; j++) {
+                        Type_Modifier* modifier = type_modifier_list_get(&substitution->new_type.modifiers, j);
+                        type_modifier_list_add(&new_type.modifiers, modifier);
+                    }
+                    new_type.ast = type->ast;
+                    new_type.base = substitution->new_type.base;
+                    return new_type;
+                }
+            }
+            return *type;
+        }
+        case type_ref: {
+            Type deref_type = type_deref(type);
+            deref_type = type_get_real_type(&deref_type, substitutions);
+            return type_get_reference(&deref_type);
+        }
+        case type_function: {
+            Type_List new_parameters = type_list_create(type->base->function.parameters.count);
+            for (u64 i = 0; i < type->base->function.parameters.count; i++) {
+                Type* parameter = type_list_get(&type->base->function.parameters, i);
+                Type new_parameter = type_get_real_type(parameter, substitutions);
+                type_list_add(&new_parameters, &new_parameter);
+            }
+            Type new_return_type = type_get_real_type(&type->base->function.return_type, substitutions);
+            Type_Base* new_Function_base_type = type_get_function_type_base(&new_parameters, new_return_type);
+            Type new_type;
+            new_type.ast = type->ast;
+            new_type.base = new_Function_base_type;
+            new_type.modifiers = type_modifier_list_create(0);
+            return new_type;
+        }
+        case type_multi_value: {
+            Type_List new_types = type_list_create(type->base->multi_value.types.count);
+            for (u64 i = 0; i < type->base->multi_value.types.count; i++) {
+                Type* type = type_list_get(&type->base->multi_value.types, i);
+                Type new_type = type_get_real_type(type, substitutions);
+                type_list_add(&new_types, &new_type);
+            }
+            Type_Base* new_MultiValue_base_type = type_get_multi_value_type_base(&new_types);
+            Type new_type;
+            new_type.ast = type->ast;
+            new_type.base = new_MultiValue_base_type;
+            new_type.modifiers = type_modifier_list_create(0);
+            return new_type;
+        }
+        case type_number_literal:
+        case type_invalid:
+        case type_void: {
+            // can't substitute these type
+            return *type;
+        }
+    }
+}
+
 Type type_get_reference(Type* type) {
     Type type_copy = *type;
     Type_Modifier ref = {0};
@@ -388,6 +458,32 @@ Type type_underlying(Type* type) {  // pointer go to underlying value
     }
 }
 
+bool type_is_reference_of(Type* ref, Type* of) {
+    Type_Type ref_type = type_get_type(ref);
+    if (ref_type != type_ref) return false;
+    Type ref_deref = type_deref(ref);
+    return type_is_equal(&ref_deref, of);
+}
+
+bool type_substitutions_is_equal(Type_Substitution_List* substitutions_a, Type_Substitution_List* substitutions_b) {
+    if (substitutions_a->count != substitutions_b->count) return false;
+    for (u64 i = 0; i < substitutions_a->count; i++) {
+        Type_Substitution* substitution_a = type_substitution_list_get(substitutions_a, i);
+        bool found = false;
+        for (u64 j = 0; j < substitutions_b->count; j++) {
+            Type_Substitution* substitution_b = type_substitution_list_get(substitutions_b, j);
+            if (substitution_a->substituted_type == substitution_b->substituted_type) {
+                if (type_is_equal(&substitution_a->new_type, &substitution_b->new_type)) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if (!found) return false;
+    }
+    return true;
+}
+
 bool type_is_equal(Type* type_a, Type* type_b) {
     if (type_a->base->type != type_b->base->type) return false;
     if (type_a->modifiers.count != type_b->modifiers.count) return false;
@@ -405,4 +501,73 @@ bool type_base_is_invalid(Type_Base* type) {
 
 bool type_is_invalid(Type* type) {
     return type_base_is_invalid(type->base);
+}
+
+LLVMTypeRef type_get_llvm_type(Type* type, Type_Substitution_List* substitutions) {
+    Type real_type = type_get_real_type(type, substitutions);
+    return type_get_llvm_type_no_substitution(&real_type);
+}
+
+LLVMTypeRef type_get_llvm_type_no_substitution(Type* type) {
+    if (type->modifiers.count > 0) {
+        Type_Modifier* last_modifier = type_modifier_list_get(&type->modifiers, type->modifiers.count - 1);
+        switch (last_modifier->type) {
+            case type_modifier_ref: {
+                Type deref_type = type_deref(type);
+                LLVMTypeRef deref_llvm_type = type_get_llvm_type_no_substitution(&deref_type);
+                return LLVMPointerType(deref_llvm_type, 0);
+            }
+            case type_modifier_invalid:
+                massert(false, "invalid type");
+                return NULL;
+        }
+    }
+    return type_get_base_llvm_type_no_substitution(type->base);
+}
+
+LLVMTypeRef type_get_base_llvm_type_no_substitution(Type_Base* type_base) {
+    Type_Type type_type = type_base->type;
+    switch (type_type) {
+        case type_int:
+            return LLVMIntType(type_base->int_.bits);
+        case type_float:
+            if (type_base->float_.bits == 32) {
+                return LLVMFloatType();
+            } else if (type_base->float_.bits == 64) {
+                return LLVMDoubleType();
+            } else if (type_base->float_.bits == 16) {
+                return LLVMHalfType();
+            } else {
+                red_printf("invalid float bits: %u\n", type_base->float_.bits);
+                massert(false, "invalid float bits");
+                abort();
+            }
+            return NULL;
+        case type_uint:
+            return LLVMIntType(type_base->uint.bits);
+            break;
+        case type_void:
+            return LLVMVoidType();
+            break;
+        case type_function: {
+            LLVMTypeRef return_llvm_type = type_get_llvm_type_no_substitution(&type_base->function.return_type);
+            LLVMTypeRef parameter_type_buffer[512];
+            if (type_base->function.parameters.count > 512) {
+                red_printf("too many parameters\n");
+                abort();
+            }
+            for (u64 i = 0; i < type_base->function.parameters.count; i++) {
+                Type* parameter_type = type_list_get(&type_base->function.parameters, i);
+                parameter_type_buffer[i] = type_get_llvm_type_no_substitution(parameter_type);
+            }
+            return LLVMFunctionType(return_llvm_type, parameter_type_buffer, type_base->function.parameters.count, false);
+            break;
+        }
+        case type_invalid:
+        case type_ref:
+        case type_number_literal:
+        case type_multi_value:
+            return NULL;
+            break;
+    }
 }

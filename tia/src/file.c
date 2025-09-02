@@ -69,6 +69,16 @@ u64_List file_get_line_start_indexes(File* file) {
     return line_start_indexes;
 }
 
+bool has_main_function(File* file) {
+    for (u64 i = 0; i < file->functions.count; i++) {
+        Function* function = function_pointer_list_get_function(&file->functions, i);
+        if (strcmp(function->name, "main") == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 u64 file_get_lines(File* file, u64 t_start_index, u64 t_end_index, u64* out_count) {
     char* file_contents = file->contents;
 

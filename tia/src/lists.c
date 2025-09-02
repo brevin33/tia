@@ -662,3 +662,160 @@ Function* function_pointer_list_get_function(Function_Pointer_List* list, u64 in
 void function_pointer_list_pop(Function_Pointer_List* list) {
     list->count--;
 }
+
+Type_Substitution_List type_substitution_list_create(u64 initial_size) {
+    Type_Substitution_List list;
+    if (initial_size == 0) {
+        list.data = NULL;
+        list.count = 0;
+        list.capacity = 0;
+    } else {
+        list.data = alloc(initial_size * sizeof(Type_Substitution));
+        list.count = 0;
+        list.capacity = initial_size;
+    }
+    return list;
+}
+
+Type_Substitution* type_substitution_list_add(Type_Substitution_List* list, Type_Substitution* type_substitution) {
+    if (list->count >= list->capacity) {
+        if (list->capacity == 0) {
+            list->capacity = 8;
+        }
+        list->capacity *= 2;
+        void* old_data = list->data;
+        list->data = alloc(list->capacity * sizeof(Type_Substitution));
+        memcpy(list->data, old_data, list->count * sizeof(Type_Substitution));
+    }
+    list->data[list->count] = *type_substitution;
+    list->count++;
+    return &list->data[list->count - 1];
+}
+
+Type_Substitution* type_substitution_list_get(Type_Substitution_List* list, u64 index) {
+    return &list->data[index];
+}
+
+void type_substitution_list_pop(Type_Substitution_List* list) {
+    list->count--;
+}
+
+Type_Substitution_List type_substitution_list_copy(Type_Substitution_List* list) {
+    Type_Substitution_List substitutions = type_substitution_list_create(list->count);
+    for (u64 i = 0; i < list->count; i++) {
+        Type_Substitution* substitution = type_substitution_list_get(list, i);
+        type_substitution_list_add(&substitutions, substitution);
+    }
+    return substitutions;
+}
+
+LLVMValueRef_List llvm_value_ref_list_create(u64 initial_size) {
+    LLVMValueRef_List list;
+    if (initial_size == 0) {
+        list.data = NULL;
+        list.count = 0;
+        list.capacity = 0;
+    } else {
+        list.data = alloc(initial_size * sizeof(LLVMValueRef));
+        list.count = 0;
+        list.capacity = initial_size;
+    }
+    return list;
+}
+
+LLVMValueRef* llvm_value_ref_list_add(LLVMValueRef_List* list, LLVMValueRef value) {
+    if (list->count >= list->capacity) {
+        if (list->capacity == 0) {
+            list->capacity = 8;
+        }
+        list->capacity *= 2;
+        void* old_data = list->data;
+        list->data = alloc(list->capacity * sizeof(LLVMValueRef));
+        memcpy(list->data, old_data, list->count * sizeof(LLVMValueRef));
+    }
+    list->data[list->count] = value;
+    list->count++;
+    return &list->data[list->count - 1];
+}
+
+LLVMValueRef* llvm_value_ref_list_get(LLVMValueRef_List* list, u64 index) {
+    return &list->data[index];
+}
+
+void llvm_value_ref_list_pop(LLVMValueRef_List* list) {
+    list->count--;
+}
+
+LLVM_Type_Substitutions_To_LLVM_Value_List llvm_type_substitutions_to_llvm_value_list_create(u64 initial_size) {
+    LLVM_Type_Substitutions_To_LLVM_Value_List list;
+    if (initial_size == 0) {
+        list.data = NULL;
+        list.count = 0;
+        list.capacity = 0;
+    } else {
+        list.data = alloc(initial_size * sizeof(LLVM_Type_Substitutions_To_LLVM_Value));
+        list.count = 0;
+        list.capacity = initial_size;
+    }
+    return list;
+}
+
+LLVM_Type_Substitutions_To_LLVM_Value* llvm_type_substitutions_to_llvm_value_list_add(LLVM_Type_Substitutions_To_LLVM_Value_List* list, LLVM_Type_Substitutions_To_LLVM_Value* llvm_type_substitutions_to_llvm_value) {
+    if (list->count >= list->capacity) {
+        if (list->capacity == 0) {
+            list->capacity = 8;
+        }
+        list->capacity *= 2;
+        void* old_data = list->data;
+        list->data = alloc(list->capacity * sizeof(LLVM_Type_Substitutions_To_LLVM_Value));
+        memcpy(list->data, old_data, list->count * sizeof(LLVM_Type_Substitutions_To_LLVM_Value));
+    }
+    list->data[list->count] = *llvm_type_substitutions_to_llvm_value;
+    list->count++;
+    return &list->data[list->count - 1];
+}
+
+LLVM_Type_Substitutions_To_LLVM_Value* llvm_type_substitutions_to_llvm_value_list_get(LLVM_Type_Substitutions_To_LLVM_Value_List* list, u64 index) {
+    return &list->data[index];
+}
+
+void llvm_type_substitutions_to_llvm_value_list_pop(LLVM_Type_Substitutions_To_LLVM_Value_List* list) {
+    list->count--;
+}
+
+Variable_LLVM_Value_List variable_llvm_value_list_create(u64 initial_size) {
+    Variable_LLVM_Value_List list;
+    if (initial_size == 0) {
+        list.data = NULL;
+        list.count = 0;
+        list.capacity = 0;
+    } else {
+        list.data = alloc(initial_size * sizeof(Variable_LLVM_Value));
+        list.count = 0;
+        list.capacity = initial_size;
+    }
+    return list;
+}
+
+Variable_LLVM_Value* variable_llvm_value_list_add(Variable_LLVM_Value_List* list, Variable_LLVM_Value* variable_llvm_value) {
+    if (list->count >= list->capacity) {
+        if (list->capacity == 0) {
+            list->capacity = 8;
+        }
+        list->capacity *= 2;
+        void* old_data = list->data;
+        list->data = alloc(list->capacity * sizeof(Variable_LLVM_Value));
+        memcpy(list->data, old_data, list->count * sizeof(Variable_LLVM_Value));
+    }
+    list->data[list->count] = *variable_llvm_value;
+    list->count++;
+    return &list->data[list->count - 1];
+}
+
+Variable_LLVM_Value* variable_llvm_value_list_get(Variable_LLVM_Value_List* list, u64 index) {
+    return &list->data[index];
+}
+
+void variable_llvm_value_list_pop(Variable_LLVM_Value_List* list) {
+    list->count--;
+}

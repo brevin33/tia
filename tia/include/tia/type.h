@@ -1,6 +1,7 @@
 #pragma once
 #include "tia/basic.h"
 #include "tia/lists.h"
+#include "tia/llvm.h"
 
 typedef struct Type_Base Type_Base;
 
@@ -49,6 +50,11 @@ typedef struct Type_Function {
     Type return_type;
     Type_List parameters;
 } Type_Function;
+
+typedef struct Type_Substitution {
+    Type_Base* substituted_type;
+    Type new_type;
+} Type_Substitution;
 
 typedef struct Type_Multi_Value {
     Type_List types;
@@ -102,7 +108,15 @@ Type_Type type_get_type(Type* type);
 Type type_deref(Type* type);       // pointer go to references
 Type type_underlying(Type* type);  // pointer go to underlying value
 Type type_get_reference(Type* type);
+Type type_get_real_type(Type* type, Type_Substitution_List* substitutions);
 
 bool type_is_equal(Type* type_a, Type* type_b);
 bool type_base_is_invalid(Type_Base* type);
 bool type_is_invalid(Type* type);
+bool type_substitutions_is_equal(Type_Substitution_List* substitutions_a, Type_Substitution_List* substitutions_b);
+bool type_is_reference_of(Type* ref, Type* of);
+
+// LLVM compilation
+LLVMTypeRef type_get_llvm_type(Type* type, Type_Substitution_List* substitutions);
+LLVMTypeRef type_get_llvm_type_no_substitution(Type* type);
+LLVMTypeRef type_get_base_llvm_type_no_substitution(Type_Base* type_base);

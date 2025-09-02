@@ -1,5 +1,6 @@
 #pragma once
 #include "tia/basic.h"
+#include "tia/llvm.h"
 
 typedef struct {
     void** data;
@@ -207,3 +208,52 @@ Function** function_pointer_list_add(Function_Pointer_List* list, Function* func
 Function** function_pointer_list_get(Function_Pointer_List* list, u64 index);
 Function* function_pointer_list_get_function(Function_Pointer_List* list, u64 index);
 void function_pointer_list_pop(Function_Pointer_List* list);
+
+typedef struct Type_Substitution Type_Substitution;
+typedef struct {
+    Type_Substitution* data;
+    u64 count;
+    u64 capacity;
+} Type_Substitution_List;
+
+Type_Substitution_List type_substitution_list_create(u64 initial_size);
+Type_Substitution* type_substitution_list_add(Type_Substitution_List* list, Type_Substitution* type_substitution);
+Type_Substitution* type_substitution_list_get(Type_Substitution_List* list, u64 index);
+void type_substitution_list_pop(Type_Substitution_List* list);
+Type_Substitution_List type_substitution_list_copy(Type_Substitution_List* list);
+
+typedef struct {
+    LLVMValueRef* data;
+    u64 count;
+    u64 capacity;
+} LLVMValueRef_List;
+
+LLVMValueRef_List llvm_value_ref_list_create(u64 initial_size);
+LLVMValueRef* llvm_value_ref_list_add(LLVMValueRef_List* list, LLVMValueRef value);
+LLVMValueRef* llvm_value_ref_list_get(LLVMValueRef_List* list, u64 index);
+void llvm_value_ref_list_pop(LLVMValueRef_List* list);
+
+typedef struct LLVM_Type_Substitutions_To_LLVM_Value LLVM_Type_Substitutions_To_LLVM_Value;
+
+typedef struct {
+    LLVM_Type_Substitutions_To_LLVM_Value* data;
+    u64 count;
+    u64 capacity;
+} LLVM_Type_Substitutions_To_LLVM_Value_List;
+
+LLVM_Type_Substitutions_To_LLVM_Value_List llvm_type_substitutions_to_llvm_value_list_create(u64 initial_size);
+LLVM_Type_Substitutions_To_LLVM_Value* llvm_type_substitutions_to_llvm_value_list_add(LLVM_Type_Substitutions_To_LLVM_Value_List* list, LLVM_Type_Substitutions_To_LLVM_Value* llvm_type_substitutions_to_llvm_value);
+LLVM_Type_Substitutions_To_LLVM_Value* llvm_type_substitutions_to_llvm_value_list_get(LLVM_Type_Substitutions_To_LLVM_Value_List* list, u64 index);
+void llvm_type_substitutions_to_llvm_value_list_pop(LLVM_Type_Substitutions_To_LLVM_Value_List* list);
+
+typedef struct Variable_LLVM_Value Variable_LLVM_Value;
+typedef struct Variable_LLVM_Value_List {
+    Variable_LLVM_Value* data;
+    u64 count;
+    u64 capacity;
+} Variable_LLVM_Value_List;
+
+Variable_LLVM_Value_List variable_llvm_value_list_create(u64 initial_size);
+Variable_LLVM_Value* variable_llvm_value_list_add(Variable_LLVM_Value_List* list, Variable_LLVM_Value* variable_llvm_value);
+Variable_LLVM_Value* variable_llvm_value_list_get(Variable_LLVM_Value_List* list, u64 index);
+void variable_llvm_value_list_pop(Variable_LLVM_Value_List* list);
