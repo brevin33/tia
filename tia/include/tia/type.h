@@ -30,6 +30,7 @@ typedef enum Type_Type {
     type_void,
     type_function,
     type_multi_value,
+    type_interface,
     // modifiers
     type_ref,
 } Type_Type;
@@ -59,6 +60,11 @@ typedef struct Type_Substitution {
 typedef struct Type_Multi_Value {
     Type_List types;
 } Type_Multi_Value;
+
+typedef struct Type_Interface_Function {
+    Type function_type;
+    char* function_name;
+} Type_Interface_Function;
 
 typedef struct Type_Base {
     Type_Type type;
@@ -115,6 +121,8 @@ bool type_base_is_invalid(Type_Base* type);
 bool type_is_invalid(Type* type);
 bool type_substitutions_is_equal(Type_Substitution_List* substitutions_a, Type_Substitution_List* substitutions_b);
 bool type_is_reference_of(Type* ref, Type* of);
+
+bool type_fullfills_interface(Type* type, Type* interface);
 
 // LLVM compilation
 LLVMTypeRef type_get_llvm_type(Type* type, Type_Substitution_List* substitutions);

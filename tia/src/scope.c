@@ -30,7 +30,7 @@ Variable* scope_add_variable(Scope* scope, Variable* variable) {
         var.type = deref_type;
     }
 
-    Variable* in_list_variable = variable_list_add(&scope->variables, variable);
+    Variable* in_list_variable = variable_list_add(&scope->variables, &var);
     return in_list_variable;
 }
 
@@ -53,6 +53,7 @@ bool scope_compile_scope(Scope* scope, Function* func, Type_Substitution_List* s
     LLVMBasicBlockRef alloca_block = LLVMAppendBasicBlock(function_value, "alloca");
     LLVMBuildBr(context.llvm_info.builder, alloca_block);
     LLVMPositionBuilderAtEnd(context.llvm_info.builder, alloca_block);
+    context.llvm_info.current_block = alloca_block;
 
     for (u64 i = 0; i < scope->variables.count; i++) {
         Variable* variable = variable_list_get(&scope->variables, i);
@@ -85,6 +86,8 @@ LLVMValueRef scope_get_variable_value(Variable_LLVM_Value_List* var_to_llvm_val,
             return v->value;
         }
     }
+    massert(false, "variable not found");
+    return NULL;
 }
 
 void scope_add_statements(Scope* scope, Ast* ast, Function* function) {

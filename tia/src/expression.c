@@ -2,6 +2,8 @@
 #include <llvm-c/Core.h>
 #include "tia.h"
 #include "tia/ast.h"
+#include "tia/function.h"
+#include "tia/lists.h"
 #include "tia/type.h"
 
 Expression expression_create(Ast* ast, Scope* scope) {
@@ -14,6 +16,8 @@ Expression expression_create(Ast* ast, Scope* scope) {
             return expression_create_number_literal(ast, scope);
         case ast_biop:
             return expression_create_biop(ast, scope);
+        case ast_function_call:
+            return expression_create_function_call(ast, scope);
         case ast_variable_declaration:
         case ast_return:
         case ast_end_statement:
@@ -28,13 +32,66 @@ Expression expression_create(Ast* ast, Scope* scope) {
     }
 }
 
+Expression expression_create_function_call(Ast* ast, Scope* scope) {
+    massert(ast->type == ast_function_call, "ast is not ast_function_call");
+    Expression expression = {0};
+    expression.expr_type = et_function_call;
+    expression.ast = ast;
+    char* function_name = ast->function_call.function_name;
+    Expression_List arguments = expression_list_create(ast->function_call.arguments.count);
+    Type_List parameter_types = type_list_create(ast->function_call.arguments.count);
+    for (u64 i = 0; i < ast->function_call.arguments.count; i++) {
+        Ast* argument_ast = ast_list_get(&ast->function_call.arguments, i);
+        Expression argument = expression_create(argument_ast, scope);
+        if (argument.expr_type == et_invalid) return argument;
+        expression_list_add(&arguments, &argument);
+        Type* argument_type = &argument.type;
+        type_list_add(&parameter_types, argument_type);
+    }
+
+    Function_Find_Result function = function_find(&parameter_types, function_name, ast);
+    if (function.function == NULL) {
+        Expression err = {0};
+        return err;
+    }
+
+    Type* function_type = &function.function->type;
+    Type real_function_type = type_get_real_type(function_type, &function.substitutions);
+    for (u64 i = 0; i < arguments.count; i++) {
+        Expression* argument = expression_list_get(&arguments, i);
+        Type_List* function_paramerters = &real_function_type.base->function.parameters;
+        Type* function_parameter = &function_paramerters->data[i];
+        Expression argument_cast = expression_implicitly_cast(argument, function_parameter);
+        if (argument_cast.expr_type == et_invalid) {
+            massert(false, "should never happen");
+            Expression err = {0};
+            return err;
+        }
+        *argument = argument_cast;
+    }
+
+    expression.function_call.function = function;
+    expression.function_call.arguments = arguments;
+    Type* return_type = &real_function_type.base->function.return_type;
+    expression.type = *return_type;
+    return expression;
+}
+
 Expression expression_create_variable(Ast* ast, Scope* scope) {
     Expression expression = {0};
     expression.expr_type = et_variable;
     expression.ast = ast;
     Variable* variable = scope_get_variable(scope, ast->word.word);
+    if (variable == NULL) {
+        log_error_ast(ast, "Variable %s not found", ast->word.word);
+        Expression err = {0};
+        return err;
+    }
     expression.variable.variable = variable;
-    expression.type = variable->type;
+    Type_Type var_type_type = type_get_type(&variable->type);
+    massert(var_type_type != type_ref, "variable is not type_ref");
+    Type ref_type = type_get_reference(&variable->type);
+    expression.type = ref_type;
     return expression;
 }
 
@@ -113,7 +170,7 @@ bool expression_can_implicitly_cast_without_deref(Type* expression, Type* type) 
     if (expression_type_type == type_int && type_type == type_int) {
         u64 bits_expression = expression->base->int_.bits;
         u64 bits_type = type->base->int_.bits;
-        if (bits_expression > bits_type) {
+        if (bits_expression <= bits_type) {
             return true;
         } else {
             return false;
@@ -127,7 +184,7 @@ bool expression_can_implicitly_cast_without_deref(Type* expression, Type* type) 
     if (expression_type_type == type_uint && type_type == type_uint) {
         u64 bits_expression = expression->base->uint.bits;
         u64 bits_type = type->base->uint.bits;
-        if (bits_expression > bits_type) {
+        if (bits_expression <= bits_type) {
             return true;
         } else {
             return false;
@@ -161,7 +218,9 @@ Expression expression_implicitly_cast(Expression* expression, Type* type) {
         Type deref_type = type_deref(&expression->type);
         can = expression_can_implicitly_cast(&deref_type, type);
         if (can) {
-            Expression cast = expression_cast(expression, type);
+            Expression* deref = alloc(sizeof(Expression));
+            *deref = expression_cast(expression, &deref_type);
+            Expression cast = expression_cast(deref, type);
             return cast;
         }
     }
@@ -173,7 +232,7 @@ Expression expression_implicitly_cast(Expression* expression, Type* type) {
     return err;
 }
 
-void expression_compile(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
+LLVMValueRef expression_compile(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
     switch (expression->expr_type) {
         case et_number_literal:
             return expression_compile_number_literal(expression, func, scope, substitutions, var_to_llvm_val, function_value);
@@ -181,27 +240,68 @@ void expression_compile(Expression* expression, Function* func, Scope* scope, Ty
             return expression_compile_variable(expression, func, scope, substitutions, var_to_llvm_val, function_value);
         case et_biop:
             massert(false, "not implemented");
+            return NULL;
         case et_multi_expression:
-            massert(false, "not implemented");
+            return expression_compile_multi_expression(expression, func, scope, substitutions, var_to_llvm_val, function_value);
         case et_cast:
             return expression_compile_cast(expression, func, scope, substitutions, var_to_llvm_val, function_value);
+        case et_function_call:
+            return expression_compile_function_call(expression, func, scope, substitutions, var_to_llvm_val, function_value);
         case et_invalid:
             massert(false, "unexpected expression");
+            return NULL;
     }
 }
 
-void expression_compile_number_literal(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
-    // do nothing
+// multi value is special and actually return a pointer to LLVMValueRef array so we need to cast it.
+LLVMValueRef expression_compile_multi_expression(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
+    massert(expression->expr_type == et_multi_expression, "expression is not et_multi_expression");
+    Expression_Multi_Expression* multi_expression = &expression->multi_expression;
+    LLVMValueRef* mulit_value = alloc(sizeof(LLVMValueRef) * multi_expression->expressions.count);
+    massert(multi_expression->expressions.count < 512, "too many expressions");
+    for (u64 i = 0; i < multi_expression->expressions.count; i++) {
+        Expression* expression = expression_list_get(&multi_expression->expressions, i);
+        mulit_value[i] = expression_compile(expression, func, scope, substitutions, var_to_llvm_val, function_value);
+    }
+    // multi value is special and actually return a pointer to LLVMValueRef array so we need to cast it.
+    return (LLVMValueRef)mulit_value;
 }
 
-void expression_compile_variable(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
-    // do nothing
+LLVMValueRef expression_compile_function_call(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
+    massert(expression->expr_type == et_function_call, "expression is not et_function_call");
+    Function* function = expression->function_call.function.function;
+    Type* function_type = &function->type;
+    Type* return_type = &function_type->base->function.return_type;
+    Expression_List arguments = expression->function_call.arguments;
+
+    // compile arguments
+    LLVMValueRef args[arguments.count];
+    for (u64 i = 0; i < arguments.count; i++) {
+        Expression* argument = expression_list_get(&arguments, i);
+        args[i] = expression_compile(argument, func, scope, substitutions, var_to_llvm_val, function_value);
+    }
+
+    // TODO: fill in the new substitutions list
+    LLVMValueRef fun_val = function_get_llvm_value(function, &expression->function_call.function.substitutions);
+    LLVMTypeRef function_type_llvm = type_get_llvm_type(function_type, &expression->function_call.function.substitutions);
+    // LLVMValueRef i32_value = LLVMConstInt(LLVMInt32Type(), 0, false);
+    // expression->value = i32_value;
+    LLVMValueRef call = LLVMBuildCall2(context.llvm_info.builder, function_type_llvm, fun_val, args, arguments.count, "funcCall");
+    return call;
 }
 
-void expression_compile_cast(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
+LLVMValueRef expression_compile_number_literal(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
+    // do nothing
+    return NULL;
+}
+
+LLVMValueRef expression_compile_variable(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
+    return scope_get_variable_value(var_to_llvm_val, expression->variable.variable);
+}
+
+LLVMValueRef expression_compile_cast(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
     Expression* from_expression = expression->cast.expression;
-    expression_compile(from_expression, func, scope, substitutions, var_to_llvm_val, function_value);
-    LLVMValueRef from_value = from_expression->value;
+    LLVMValueRef from_value = expression_compile(from_expression, func, scope, substitutions, var_to_llvm_val, function_value);
 
     Type to_type = type_get_real_type(&expression->type, substitutions);
     Type_Type to_type_type = type_get_type(&to_type);
@@ -210,78 +310,74 @@ void expression_compile_cast(Expression* expression, Function* func, Scope* scop
     Type_Type from_type_type = type_get_type(&from_type);
     LLVMTypeRef from_type_llvm = type_get_llvm_type(&from_type, substitutions);
 
+    if (type_is_equal(&from_type, &to_type)) {
+        return from_value;
+    }
+
     if (type_is_reference_of(&from_type, &to_type)) {
         LLVMTypeRef to_type_llvm = type_get_llvm_type(&to_type, substitutions);
-        expression->value = LLVMBuildLoad2(context.llvm_info.builder, to_type_llvm, from_value, "deref");
-        return;
+        return LLVMBuildLoad2(context.llvm_info.builder, to_type_llvm, from_value, "deref");
     }
 
     if (from_type_type == type_number_literal && (to_type_type == type_int || to_type_type == type_uint)) {
         Expression_Number_Literal from_number = expression_get_number_literal(from_expression);
         if (from_number.is_float) {
             i64 as_u64 = from_number.number_float;
-            expression->value = LLVMConstInt(to_type_llvm, as_u64, false);
+            return LLVMConstInt(to_type_llvm, as_u64, false);
         } else {
-            expression->value = LLVMConstIntOfString(to_type_llvm, from_number.number, 10);
+            return LLVMConstIntOfString(to_type_llvm, from_number.number, 10);
         }
-        return;
     }
     if (from_type_type == type_number_literal && to_type_type == type_float) {
         Expression_Number_Literal from_number = expression_get_number_literal(from_expression);
         if (from_number.is_float) {
-            expression->value = LLVMConstReal(to_type_llvm, from_number.number_float);
+            return LLVMConstReal(to_type_llvm, from_number.number_float);
         } else {
-            expression->value = LLVMConstRealOfString(to_type_llvm, from_number.number);
+            return LLVMConstRealOfString(to_type_llvm, from_number.number);
         }
-        return;
     }
 
     if ((from_type_type == type_int || from_type_type == type_uint) && to_type_type == type_int) {
         u64 to_bits = to_type.base->int_.bits;
         u64 from_bits = from_type.base->int_.bits;
         if (to_bits > from_bits) {
-            expression->value = LLVMBuildSExt(context.llvm_info.builder, from_value, to_type_llvm, "sext");
+            return LLVMBuildSExt(context.llvm_info.builder, from_value, to_type_llvm, "sext");
         } else if (to_bits < from_bits) {
-            expression->value = LLVMBuildTrunc(context.llvm_info.builder, from_value, to_type_llvm, "trunc");
+            return LLVMBuildTrunc(context.llvm_info.builder, from_value, to_type_llvm, "trunc");
         } else {
-            expression->value = from_value;
+            return from_value;
         }
-        return;
     }
 
     if ((from_type_type == type_uint || from_type_type == type_int) && to_type_type == type_uint) {
         u64 to_bits = to_type.base->uint.bits;
         u64 from_bits = from_type.base->uint.bits;
         if (to_bits > from_bits) {
-            expression->value = LLVMBuildZExt(context.llvm_info.builder, from_value, to_type_llvm, "zext");
+            return LLVMBuildZExt(context.llvm_info.builder, from_value, to_type_llvm, "zext");
         } else if (to_bits < from_bits) {
-            expression->value = LLVMBuildTrunc(context.llvm_info.builder, from_value, to_type_llvm, "trunc");
+            return LLVMBuildTrunc(context.llvm_info.builder, from_value, to_type_llvm, "trunc");
         } else {
-            expression->value = from_value;
+            return from_value;
         }
-        return;
     }
 
     if (from_type_type == type_float && to_type_type == type_float) {
         u64 to_bits = to_type.base->float_.bits;
         u64 from_bits = from_type.base->float_.bits;
         if (to_bits > from_bits) {
-            expression->value = LLVMBuildFPExt(context.llvm_info.builder, from_value, to_type_llvm, "fpext");
+            return LLVMBuildFPExt(context.llvm_info.builder, from_value, to_type_llvm, "fpext");
         } else if (to_bits < from_bits) {
-            expression->value = LLVMBuildFPTrunc(context.llvm_info.builder, from_value, to_type_llvm, "fptrunc");
+            return LLVMBuildFPTrunc(context.llvm_info.builder, from_value, to_type_llvm, "fptrunc");
         } else {
-            expression->value = from_value;
+            return from_value;
         }
-        return;
     }
 
     if (from_type_type == type_int && to_type_type == type_float) {
-        expression->value = LLVMBuildSIToFP(context.llvm_info.builder, from_value, to_type_llvm, "int_to_float");
-        return;
+        return LLVMBuildSIToFP(context.llvm_info.builder, from_value, to_type_llvm, "int_to_float");
     }
     if (from_type_type == type_uint && to_type_type == type_float) {
-        expression->value = LLVMBuildUIToFP(context.llvm_info.builder, from_value, to_type_llvm, "uint_to_float");
-        return;
+        return LLVMBuildUIToFP(context.llvm_info.builder, from_value, to_type_llvm, "uint_to_float");
     }
     massert(false, "not implemented");
 }
@@ -307,6 +403,7 @@ Expression_Number_Literal expression_get_number_literal(Expression* expression) 
         case et_variable:
         case et_multi_expression:
         case et_cast:
+        case et_function_call:
         case et_invalid:
             massert(false, "unexpected expression");
     }

@@ -21,7 +21,13 @@ typedef enum Ast_Type {
     ast_scope,
     ast_assignment,
     ast_multi_expression,
+    ast_function_call,
 } Ast_Type;
+
+typedef struct Ast_Function_Call {
+    char* function_name;
+    Ast_List arguments;
+} Ast_Function_Call;
 
 typedef struct Ast_Function_Declaration {
     Ast* return_type;
@@ -108,6 +114,7 @@ typedef struct Ast {
         Ast_Scope scope;
         Ast_Assignment assignment;
         Ast_Multi_Expression multi_expression;
+        Ast_Function_Call function_call;
     };
 } Ast;
 
@@ -128,6 +135,8 @@ Ast ast_variable_declaration_parse(Token** tokens);
 Ast ast_expresssion_parse(Token** tokens, TokenType_* delimiters, u64 num_delimiters);
 
 Ast ast_word_parse(Token** tokens);
+
+Ast ast_function_call_parse(Token** tokens);
 
 Ast ast_string_parse(Token** tokens);
 

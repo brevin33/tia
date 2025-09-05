@@ -66,6 +66,18 @@ bool is_number_float(char* c);
 
 double string_to_double(char* string);
 
+bool directory_exists(const char* path);
+
+bool file_exists(const char* path);
+
+bool make_directory(const char* path);
+
+bool delete_file(const char* path);
+
+bool delete_directory(const char* path);
+
+bool link_obj_to_exe(const char* obj_path, const char* exe_path);
+
 #define CASE_NUMBER \
     case '0':       \
     case '1':       \

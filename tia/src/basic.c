@@ -5,7 +5,14 @@
 #else
 #include <dirent.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
+
+bool link_obj_to_exe(const char* obj_path, const char* exe_path) {
+    char buffer[512 * 8];
+    snprintf(buffer, 512 * 8, "lld-link /OUT:%s /SUBSYSTEM:CONSOLE %s /DEFAULTLIB:libcmt", exe_path, obj_path);
+    return system(buffer) == 0;
+}
 
 void red_printf(const char* message, ...) {
     printf("\x1b[31m");
@@ -162,6 +169,107 @@ char** get_file_in_directory(const char* path_, u64* out_count) {
     *out_count = file_count;
     return files;
 }
+
+#if defined(_WIN32)
+bool directory_exists(const char* path) {
+    DWORD attr = GetFileAttributesA(path);
+    return (attr != INVALID_FILE_ATTRIBUTES) && (attr & FILE_ATTRIBUTE_DIRECTORY);
+}
+#else
+bool directory_exists(const char* path) {
+    struct stat info;
+    return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
+}
+#endif
+
+#if defined(_WIN32)
+bool file_exists(const char* path) {
+    DWORD attr = GetFileAttributesA(path);
+    return (attr != INVALID_FILE_ATTRIBUTES) && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+}
+#else
+bool file_exists(const char* path) {
+    struct stat info;
+    return stat(path, &info) == 0 && S_ISREG(info.st_mode);
+}
+#endif
+
+#if defined(_WIN32)
+bool make_directory(const char* path) {
+    return CreateDirectoryA(path, NULL) || GetLastError() == ERROR_ALREADY_EXISTS;
+}
+#else
+bool make_directory(const char* path) {
+    return mkdir(path, 0755) == 0 || errno == EEXIST;
+}
+#endif
+
+#if defined(_WIN32)
+bool delete_file(const char* path) {
+    return DeleteFileA(path) != 0;
+}
+#else
+bool delete_file(const char* path) {
+    return unlink(path) == 0;
+}
+#endif
+
+#if defined(_WIN32)
+bool delete_directory(const char* path) {
+    WIN32_FIND_DATAA find_data;
+    char search_path[MAX_PATH];
+    snprintf(search_path, sizeof(search_path), "%s\\*", path);
+    HANDLE hFind = FindFirstFileA(search_path, &find_data);
+    if (hFind == INVALID_HANDLE_VALUE) return RemoveDirectoryA(path) != 0;
+
+    do {
+        if (strcmp(find_data.cFileName, ".") == 0 || strcmp(find_data.cFileName, "..") == 0)
+            continue;
+        char item_path[MAX_PATH];
+        snprintf(item_path, sizeof(item_path), "%s\\%s", path, find_data.cFileName);
+        if (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (!delete_directory(item_path)) {
+                FindClose(hFind);
+                return false;
+            }
+        } else {
+            if (!DeleteFileA(item_path)) {
+                FindClose(hFind);
+                return false;
+            }
+        }
+    } while (FindNextFileA(hFind, &find_data));
+    FindClose(hFind);
+    return RemoveDirectoryA(path) != 0;
+}
+#else
+
+bool delete_directory(const char* path) {
+    DIR* dir = opendir(path);
+    if (!dir) return rmdir(path) == 0;
+    struct dirent* entry;
+    char item_path[PATH_MAX];
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+        snprintf(item_path, sizeof(item_path), "%s/%s", path, entry->d_name);
+        struct stat st;
+        if (stat(item_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+            if (!delete_directory(item_path)) {
+                closedir(dir);
+                return false;
+            }
+        } else {
+            if (unlink(item_path) != 0) {
+                closedir(dir);
+                return false;
+            }
+        }
+    }
+    closedir(dir);
+    return rmdir(path) == 0;
+}
+#endif
 
 char** get_directory_in_directory(const char* path_, u64* out_count) {
     char* path = make_portable_slashes(path_);

@@ -70,9 +70,16 @@ bool ast_parseable_as_type(Token** tokens) {
     if (token->type != tt_identifier) return false;
     token++;
     // TODO: type modifiers like ptr
-
-    *tokens = token;
-    return true;
+    while (true) {
+        switch (token->type) {
+            case tt_ref:
+                token++;
+                break;
+            default:
+                *tokens = token;
+                return true;
+        }
+    }
 }
 
 Ast ast_type_parse(Token** tokens) {
@@ -217,10 +224,10 @@ Ast ast_assignee_parse(Token** tokens) {
     Token* token = *tokens;
     Ast assignee;
     if (ast_assignee_parse_as_variable_declaration(&token)) {
-        assignee = ast_variable_declaration_parse(tokens);
+        assignee = ast_variable_declaration_parse(&token);
     } else {
         TokenType_ delimiters[] = {tt_end_statement, tt_equal, tt_comma};
-        assignee = ast_expresssion_parse(tokens, delimiters, arr_length(delimiters));
+        assignee = ast_expresssion_parse(&token, delimiters, arr_length(delimiters));
     }
     if (assignee.type == ast_invalid) return assignee;
     *tokens = token;
@@ -237,7 +244,11 @@ Ast ast_assignment_parse(Token** tokens) {
         Ast assignee_ast = ast_assignee_parse(&token);
         if (assignee_ast.type == ast_invalid) return assignee_ast;
         Ast_Assignee assignee = {0};
-        assignee.is_variable_declaration = true;
+        if (assignee_ast.type == ast_variable_declaration) {
+            assignee.is_variable_declaration = true;
+        } else {
+            assignee.is_variable_declaration = false;
+        }
         assignee.variable_declaration = alloc(sizeof(Ast));
         *assignee.variable_declaration = assignee_ast;
         ast_assignee_list_add(&assignees, &assignee);
@@ -309,6 +320,10 @@ Ast ast_scope_parse(Token** tokens) {
             continue;
         }
         ast_list_add(&ast.scope.statements, &statement);
+        if (token->type == tt_end_of_file) {
+            Ast err = {0};
+            return err;
+        }
     }
 
     massert(token->type == tt_close_brace, "token type is not tt_close_brace");
@@ -429,6 +444,61 @@ Ast ast_number_parse(Token** tokens) {
     return ast;
 }
 
+Ast ast_function_call_parse(Token** tokens) {
+    Token* token = *tokens;
+    Ast ast = {0};
+    ast.type = ast_function_call;
+    ast.token = token;
+
+    massert(token->type == tt_identifier, "token type is not tt_identifier");
+    char* function_name = token_get_string(token);
+    token++;
+    if (token->type != tt_open_paren) {
+        log_error_token(token, "Expected open paren after function name");
+        Ast err = {0};
+        return err;
+    }
+    token++;
+
+    Ast_Function_Call function_call = {0};
+    Ast_List arguments = ast_list_create(0);
+    while (true) {
+        TokenType_ delimiters[] = {tt_comma, tt_close_paren};
+        Ast argument = ast_expresssion_parse(&token, delimiters, arr_length(delimiters));
+        if (argument.type == ast_invalid) return argument;
+        ast_list_add(&arguments, &argument);
+        if (token->type == tt_comma) {
+            token++;
+            continue;
+        }
+        if (token->type == tt_close_paren) {
+            break;
+        }
+        log_error_token(token, "Expected comma or close paren after function parameter");
+        Ast err = {0};
+        return err;
+    }
+    massert(token->type == tt_close_paren, "token type is not tt_close_paren");
+    token++;
+
+    function_call.arguments = arguments;
+    function_call.function_name = function_name;
+    ast.function_call = function_call;
+    ast.num_tokens = token - ast.token;
+    *tokens = token;
+    return ast;
+}
+
+Ast ast_expression_value_id_parse(Token** tokens) {
+    Token* token = *tokens;
+    massert(token->type == tt_identifier, "token type is not tt_identifier");
+    token++;
+    if (token->type == tt_open_paren) {
+        return ast_function_call_parse(tokens);
+    }
+    return ast_word_parse(tokens);
+}
+
 Ast ast_word_parse(Token** tokens) {
     Token* token = *tokens;
     Ast ast = {0};
@@ -477,7 +547,7 @@ Ast ast_value_parse(Token** tokens) {
         case tt_number:
             return ast_number_parse(tokens);
         case tt_identifier:
-            return ast_word_parse(tokens);
+            return ast_expression_value_id_parse(tokens);
         case tt_string:
             return ast_string_parse(tokens);
         case tt_open_paren:

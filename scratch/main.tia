@@ -1,4 +1,13 @@
+
+any foo(any a){
+	return a
+}
+
 i32 main(){
-	return 0
+	i32 a = 8
+	i16 c = 3
+	i16 d = foo(c)
+	i32 b = foo(a)
+	return b
 }
 

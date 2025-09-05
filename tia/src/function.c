@@ -1,6 +1,7 @@
 #include "tia/function.h"
 #include "tia.h"
 #include "tia/ast.h"
+#include "tia/lists.h"
 #include "tia/type.h"
 
 void function_implement(Function* function) {
@@ -9,6 +10,141 @@ void function_implement(Function* function) {
     if (body_ast == NULL) return;
 
     scope_add_statements(&function->body_scope, body_ast, function);
+}
+
+Function_Find_Result function_find(Type_List* parameters, char* name, Ast* ast) {
+    Function_Pointer_List* functions = &context.functions;
+    Function_Pointer_List maybe_functions = function_pointer_list_create(8);
+    for (u64 i = 0; i < functions->count; i++) {
+        Function* function = function_pointer_list_get_function(functions, i);
+        if (strcmp(function->name, name) == 0) {
+            u64 parameter_count = function->type.base->function.parameters.count;
+            if (parameter_count == parameters->count) {
+                function_pointer_list_add(&maybe_functions, function);
+            }
+        }
+    }
+
+    // exact match
+    Function_Pointer_List match_functions = function_pointer_list_create(8);
+    Type_Substitution_List the_substitutions = type_substitution_list_create(0);
+    for (u64 i = 0; i < maybe_functions.count; i++) {
+        Function* function = function_pointer_list_get_function(&maybe_functions, i);
+        Type* function_type = &function->type;
+        bool match = true;
+        for (u64 j = 0; j < function_type->base->function.parameters.count; j++) {
+            Type* parameter_type = type_list_get(&function_type->base->function.parameters, j);
+            Type* parameter = type_list_get(parameters, j);
+            if (!type_is_equal(parameter, parameter_type)) {
+                match = false;
+                break;
+            }
+        }
+        if (match) {
+            function_pointer_list_add(&match_functions, function);
+        }
+    }
+
+    if (match_functions.count == 0) {
+        // implicit cast match
+        for (u64 i = 0; i < maybe_functions.count; i++) {
+            Function* function = function_pointer_list_get_function(&maybe_functions, i);
+            Type* function_type = &function->type;
+            bool match = true;
+            for (u64 j = 0; j < function_type->base->function.parameters.count; j++) {
+                Type* parameter_type = type_list_get(&function_type->base->function.parameters, j);
+                Type* parameter = type_list_get(parameters, j);
+                bool can_implicit_cast = expression_can_implicitly_cast(parameter, parameter_type);
+                if (!can_implicit_cast) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) {
+                function_pointer_list_add(&match_functions, function);
+            }
+        }
+        if (match_functions.count == 0) {
+            for (u64 i = 0; i < maybe_functions.count; i++) {
+                Function* function = function_pointer_list_get_function(&maybe_functions, i);
+                Type* function_type = &function->type;
+                Type_Substitution_List substitutions = type_substitution_list_create(4);
+                bool match = true;
+                for (u64 j = 0; j < function_type->base->function.parameters.count; j++) {
+                    if (match == false) break;
+                    Type* parameter_type = type_list_get(&function_type->base->function.parameters, j);
+                    Type* parameter = type_list_get(parameters, j);
+                    bool can_implicit_cast = expression_can_implicitly_cast(parameter, parameter_type);
+                    if (!can_implicit_cast) {
+                        if (parameter_type->base->type == type_interface) {
+                            bool fullfills = type_fullfills_interface(parameter, parameter_type);
+                            if (!fullfills) {
+                                match = false;
+                                break;
+                            }
+                            // say what we need to add to the substitutions
+                            Type_Substitution substitution = {0};
+                            substitution.substituted_type = parameter_type->base;
+                            substitution.new_type = *parameter;
+                            // make sure base type is not already being substituted
+                            for (u64 k = 0; k < substitutions.count; k++) {
+                                Type_Substitution* substitution_k = type_substitution_list_get(&substitutions, k);
+                                if (substitution_k->substituted_type == substitution.substituted_type) {
+                                    if (!type_is_equal(&substitution_k->new_type, &substitution.new_type)) {
+                                        match = false;
+                                        break;
+                                    }
+                                }
+                            }
+                            type_substitution_list_add(&substitutions, &substitution);
+                        }
+                    }
+                }
+                if (match) {
+                    function_pointer_list_add(&match_functions, function);
+                    if (match_functions.count == 1) {
+                        the_substitutions = substitutions;
+                    }
+                }
+            }
+        }
+    }
+
+    if (match_functions.count == 0) {
+        char buffer[4192];
+        sprintf(buffer, "No function named %s with parameters: ", name);
+        for (u64 i = 0; i < parameters->count; i++) {
+            char* parameter_name = type_get_name(type_list_get(parameters, i));
+            if (i == 0) {
+                sprintf(buffer, "%s %s", buffer, parameter_name);
+            } else {
+                sprintf(buffer, "%s, %s", buffer, parameter_name);
+            }
+        }
+        log_error_ast(ast, buffer);
+        return (Function_Find_Result){0};
+    } else if (match_functions.count > 1) {
+        char buffer[4192];
+        sprintf(buffer, "Multiple functions named %s with parameters: ", name);
+        for (u64 i = 0; i < parameters->count; i++) {
+            char* parameter_name = type_get_name(type_list_get(parameters, i));
+            if (i == 0) {
+                sprintf(buffer, "%s %s", buffer, parameter_name);
+            } else {
+                sprintf(buffer, "%s, %s", buffer, parameter_name);
+            }
+        }
+        log_error_ast(ast, buffer);
+        for (u64 i = 0; i < match_functions.count; i++) {
+            Function* function = function_pointer_list_get_function(&match_functions, i);
+            log_error_ast(ast, "Could have meant %s", function->name);
+        }
+        return (Function_Find_Result){0};
+    }
+    Function_Find_Result result = {0};
+    result.function = function_pointer_list_get_function(&match_functions, 0);
+    result.substitutions = the_substitutions;
+    return result;
 }
 
 Function* function_new(Ast* ast) {
@@ -128,6 +264,9 @@ LLVMValueRef function_compile_llvm(Function* function, Type_Substitution_List* s
     Type* function_type = &function->type;
     LLVMTypeRef function_type_llvm = type_get_llvm_type(function_type, substitutions);
     char* mangled_name = function_get_mangled_name(function, substitutions);
+    if (strcmp(function->name, "main") == 0) {
+        mangled_name = function->name;
+    }
 
     LLVMValueRef function_value = LLVMAddFunction(context.llvm_info.module, mangled_name, function_type_llvm);
     LLVM_Type_Substitutions_To_LLVM_Value_List* function_value_by_substitutions = &function->llvm_info.function_value_by_substitutions;
@@ -156,16 +295,17 @@ LLVMValueRef function_compile_llvm(Function* function, Type_Substitution_List* s
         } else {
             LLVMTypeRef param_type = type_get_llvm_type(&variable->type, substitutions);
             v.value = LLVMBuildAlloca(context.llvm_info.builder, param_type, variable->name);
-            variable_llvm_value_list_add(&var_to_llvm_val, &v);
+            LLVMBuildStore(context.llvm_info.builder, param_value, v.value);
         }
+        variable_llvm_value_list_add(&var_to_llvm_val, &v);
     }
+
+    scope_compile_scope(&function->body_scope, function, substitutions, &var_to_llvm_val, function_value);
 
     if (last_block != NULL) {
         context.llvm_info.current_block = last_block;
         LLVMPositionBuilderAtEnd(context.llvm_info.builder, last_block);
     }
-
-    scope_compile_scope(&function->body_scope, function, substitutions, &var_to_llvm_val, function_value);
 
     return function_value;
 }

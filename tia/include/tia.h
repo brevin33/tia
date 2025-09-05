@@ -38,4 +38,4 @@ extern Context context;
 
 Folder* create_tia_project(char* path, Arena* arena);
 
-bool compile_tia_project(Folder* folder);
+char* compile_tia_project(Folder* folder);

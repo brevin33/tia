@@ -20,6 +20,7 @@ void init_types() {
 
     type_base_new(type_number_literal, "$Number_Literal$", NULL);
     type_base_new(type_void, "void", NULL);
+    type_base_new(type_interface, "any", NULL);
 }
 
 Type_Base* type_base_new(Type_Type type, const char* name, Ast* ast) {
@@ -265,9 +266,30 @@ Type type_get_multi_value_type(Type_List* types) {
 
 char* type_get_name(Type* type) {
     u64 len = strlen(type->base->name);
+    for (u64 i = 0; i < type->modifiers.count; i++) {
+        switch (type->modifiers.data[i].type) {
+            case type_modifier_ref:
+                len += 1;
+                break;
+            default:
+                break;
+        }
+    }
     char* name = alloc(len + 1);
     memcpy(name, type->base->name, len);
-    name[len] = '\0';
+    u64 count = strlen(type->base->name);
+    for (u64 i = 0; i < type->modifiers.count; i++) {
+        switch (type->modifiers.data[i].type) {
+            case type_modifier_ref: {
+                name[count] = '&';
+                count++;
+                break;
+            }
+            default:
+                break;
+        }
+    }
+    name[count] = '\0';
     return name;
 }
 
@@ -369,8 +391,9 @@ Type type_deref(Type* type) {  // pointer go to references
 }
 
 Type type_get_real_type(Type* type, Type_Substitution_List* substitutions) {
-    Type_Type type_type = type->base->type;
+    Type_Type type_type = type_get_type(type);
     switch (type_type) {
+        case type_interface:
         case type_int:
         case type_float:
         case type_uint: {
@@ -458,6 +481,21 @@ Type type_underlying(Type* type) {  // pointer go to underlying value
     }
 }
 
+bool type_fullfills_interface(Type* type, Type* interface) {
+    Type_Type type_type = type_get_type(type);
+    if (type_type == type_invalid) return false;
+    if (type_type == type_number_literal) return false;
+    Type_Type interface_type = type_get_type(interface);
+    massert(interface_type == type_interface, "type is not type_interface");
+
+    char* interface_name = type_get_name(interface);
+    if (strcmp(interface_name, "any") == 0) {
+        return true;
+    }
+    massert(false, "not implemented");
+    return false;
+}
+
 bool type_is_reference_of(Type* ref, Type* of) {
     Type_Type ref_type = type_get_type(ref);
     if (ref_type != type_ref) return false;
@@ -485,7 +523,7 @@ bool type_substitutions_is_equal(Type_Substitution_List* substitutions_a, Type_S
 }
 
 bool type_is_equal(Type* type_a, Type* type_b) {
-    if (type_a->base->type != type_b->base->type) return false;
+    if (type_a->base != type_b->base) return false;
     if (type_a->modifiers.count != type_b->modifiers.count) return false;
     for (u64 i = 0; i < type_a->modifiers.count; i++) {
         Type_Modifier* modifier_a = type_modifier_list_get(&type_a->modifiers, i);
@@ -563,6 +601,7 @@ LLVMTypeRef type_get_base_llvm_type_no_substitution(Type_Base* type_base) {
             return LLVMFunctionType(return_llvm_type, parameter_type_buffer, type_base->function.parameters.count, false);
             break;
         }
+        case type_interface:
         case type_invalid:
         case type_ref:
         case type_number_literal:
