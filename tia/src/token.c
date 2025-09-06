@@ -77,6 +77,9 @@ void token_swap_if_keyword(Token* token) {
     if (strcmp(string, "return") == 0) {
         token->type = tt_return;
     }
+    if (strcmp(string, "interface") == 0) {
+        token->type = tt_interface;
+    }
 }
 
 Token_List token_get_tokens(File* file) {
@@ -219,6 +222,7 @@ bool token_causes_endline_to_be_endstatement(Token* token) {
         case tt_close_paren:
         case tt_close_bracket:
             return true;
+        case tt_interface:
         case tt_ref:
         case tt_end_statement:
         case tt_end_of_file:

@@ -11,9 +11,12 @@ typedef struct File {
     Token_List tokens;
     Ast* ast;
     Function_Pointer_List functions;
+    Type_Base_Pointer_List types;
 } File;
 
 File* file_new(char* path);
+
+void file_prototype_types(File* file);
 
 void file_prototype_functions(File* file);
 

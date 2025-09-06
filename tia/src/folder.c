@@ -29,6 +29,11 @@ Folder* folder_new(char* path) {
 
     for (u64 i = 0; i < folder->files.count; i++) {
         File* file = file_pointer_list_get_file(&folder->files, i);
+        file_prototype_types(file);
+    }
+
+    for (u64 i = 0; i < folder->files.count; i++) {
+        File* file = file_pointer_list_get_file(&folder->files, i);
         file_prototype_functions(file);
     }
 

@@ -37,9 +37,10 @@ char* function_get_mangled_name(Function* function, Type_Substitution_List* subs
 typedef struct Function_Find_Result {
     Function* function;
     Type_Substitution_List substitutions;
+    Type there_is_an_interface_function_return_type;
 } Function_Find_Result;
 
-Function_Find_Result function_find(Type_List* parameters, char* name, Ast* ast);
+Function_Find_Result function_find(Type_List* parameters, char* name, Ast* ast, bool log_error);
 
 LLVMValueRef function_compile_llvm(Function* function, Type_Substitution_List* substitutions);
 

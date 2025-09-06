@@ -37,6 +37,7 @@ Type_Base* type_base_new(Type_Type type, const char* name, Ast* ast) {
 
     type_base->type = type;
     type_base->name = name;
+    type_base->ast = ast;
 
     return type_base;
 }
@@ -264,6 +265,51 @@ Type type_get_multi_value_type(Type_List* types) {
     return type;
 }
 
+Type_Base* type_prototype_interface(Ast* ast) {
+    massert(ast->type == ast_interface, "ast is not ast_interface");
+    Ast_Interface* interface = &ast->interface;
+    char* interface_name = interface->name;
+    Type_Base* type_base = type_base_new(type_interface, interface_name, ast);
+    return type_base;
+}
+
+void type_implement_interface(Type_Base* type_base) {
+    Ast* ast = type_base->ast;
+    massert(ast != NULL, "type_base->ast is NULL");
+
+    Ast_Interface* interface = &ast->interface;
+    for (u64 i = 0; i < interface->functions.count; i++) {
+        Ast* function = ast_list_get(&interface->functions, i);
+        massert(function->type == ast_function_declaration, "function->type is not ast_function_declaration");
+        Ast_Function_Declaration* function_declaration = &function->function_declaration;
+        Type return_type = type_find_ast(function_declaration->return_type, true);
+
+        Type_List parameters = type_list_create(function_declaration->parameters.count);
+        if (return_type.base->type == type_invalid) {
+            type_base->type = type_invalid;
+            return;
+        }
+        for (u64 j = 0; j < function_declaration->parameters.count; j++) {
+            Ast* parameter = ast_list_get(&function_declaration->parameters, j);
+            massert(parameter->type == ast_variable_declaration, "parameter->type is not ast_variable_declaration");
+            Ast_Variable_Declaration* parameter_declaration = &parameter->variable_declaration;
+            Type parameter_type = type_find_ast(parameter_declaration->type, true);
+            if (parameter_type.base->type == type_invalid) {
+                type_base->type = type_invalid;
+                return;
+            }
+            type_list_add(&parameters, &parameter_type);
+        }
+        Type function_type = type_get_function_type(&parameters, return_type);
+        char* function_name = function_declaration->name;
+
+        Type_Interface_Function ifunction = {0};
+        ifunction.function_type = function_type;
+        ifunction.function_name = function_name;
+        type_interface_function_list_add(&type_base->interface.functions, &ifunction);
+    }
+}
+
 char* type_get_name(Type* type) {
     u64 len = strlen(type->base->name);
     for (u64 i = 0; i < type->modifiers.count; i++) {
@@ -383,6 +429,8 @@ Type type_deref(Type* type) {  // pointer go to references
         case type_ref: {
             Type deref_type = *type;
             deref_type.modifiers.count--;
+            Type_Type deref_type_type = type_get_type(&deref_type);
+            massert(deref_type_type != type_ref, "type is type_ref after deref");
             return deref_type;
         }
         default:
@@ -492,8 +540,74 @@ bool type_fullfills_interface(Type* type, Type* interface) {
     if (strcmp(interface_name, "any") == 0) {
         return true;
     }
-    massert(false, "not implemented");
-    return false;
+
+    Type_Interface* i = &type->base->interface;
+    Type_Interface_Function_List* functions = &i->functions;
+    for (u64 i = 0; i < functions->count; i++) {
+        Type_Interface_Function* function = type_interface_function_list_get(functions, i);
+        Function_Find_Result function_find_result = function_find(&function->function_type.base->function.parameters, function->function_name, NULL, false);
+        if (function_find_result.function == NULL && type_is_invalid(&function_find_result.there_is_an_interface_function_return_type)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+Type type_interface_is_there_a_interface_function(Type_List* arguments, char* function_name) {
+    for (u64 i = 0; i < arguments->count; i++) {
+        Type argument_type = *type_list_get(arguments, i);
+        Type_Type argument_type_type = type_get_type(&argument_type);
+        if (argument_type_type == type_ref) {
+            argument_type = type_deref(&argument_type);
+            argument_type_type = type_get_type(&argument_type);
+        }
+        if (argument_type_type == type_interface) {
+            Type_Interface* interface = &argument_type.base->interface;
+            for (u64 j = 0; j < interface->functions.count; j++) {
+                Type_Interface_Function* function = type_interface_function_list_get(&interface->functions, j);
+                if (strcmp(function->function_name, function_name) != 0) continue;
+
+                Type function_type = function->function_type;
+                bool fits = true;
+                Type_Substitution_List substitutions = type_substitution_list_create(0);
+                for (u64 k = 0; k < function_type.base->function.parameters.count; k++) {
+                    Type* parameter_type = type_list_get(&function_type.base->function.parameters, k);
+                    Type* argument_type = type_list_get(arguments, k);
+                    if (type_is_equal(argument_type, parameter_type)) continue;
+
+                    bool can_implicit_cast = expression_can_implicitly_cast(argument_type, parameter_type);
+                    if (can_implicit_cast) continue;
+
+                    Type_Type parameter_type_type = type_get_type(parameter_type);
+                    if (parameter_type_type == type_interface) {
+                        bool fullfills = type_fullfills_interface(argument_type, parameter_type);
+                        Type_Substitution substitution;
+                        substitution.substituted_type = parameter_type->base;
+                        substitution.new_type = *argument_type;
+
+                        for (u64 k = 0; k < substitutions.count; k++) {
+                            Type_Substitution* substitution_k = type_substitution_list_get(&substitutions, k);
+                            if (substitution_k->substituted_type == substitution.substituted_type) {
+                                if (!type_is_equal(&substitution_k->new_type, &substitution.new_type)) {
+                                    fits = false;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (fullfills) {
+                            type_substitution_list_add(&substitutions, &substitution);
+                            continue;
+                        }
+                    }
+
+                    fits = false;
+                }
+                if (fits) return function_type.base->function.return_type;
+            }
+        }
+    }
+    return type_get_invalid_type();
 }
 
 bool type_is_reference_of(Type* ref, Type* of) {

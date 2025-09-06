@@ -14,6 +14,7 @@ typedef enum Expression_Type {
     et_multi_expression,
     et_cast,
     et_function_call,
+    et_interface_function_call,
 } Expression_Type;
 
 typedef struct Expression_Number {
@@ -47,6 +48,11 @@ typedef struct Expression_Function_Call {
     Function_Find_Result function;
 } Expression_Function_Call;
 
+typedef struct Expression_Interface_Function_Call {
+    Expression_List arguments;
+    char* function_name;  // we just trust that a function will work when tempalted at compile time
+} Expression_Interface_Function_Call;
+
 typedef struct Expression {
     Expression_Type expr_type;
     Type type;
@@ -58,6 +64,7 @@ typedef struct Expression {
         Expression_Biop biop;
         Expression_Cast cast;
         Expression_Function_Call function_call;
+        Expression_Interface_Function_Call interface_function_call;
     };
 } Expression;
 
@@ -97,6 +104,8 @@ LLVMValueRef expression_compile_variable(Expression* expression, Function* func,
 LLVMValueRef expression_compile_cast(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value);
 
 LLVMValueRef expression_compile_function_call(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value);
+
+LLVMValueRef expression_compile_interface_function_call(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value);
 
 // multi value is special and actually return a pointer to LLVMValueRef array so we need to cast it.
 LLVMValueRef expression_compile_multi_expression(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value);

@@ -121,6 +121,53 @@ Ast ast_type_parse(Token** tokens) {
     return type;
 }
 
+Ast ast_interface_parse(Token** tokens) {
+    Token* token = *tokens;
+    Ast ast = {0};
+    ast.type = ast_interface;
+    ast.token = token;
+    massert(token->type == tt_interface, "token type is not tt_interface");
+    token++;
+    if (token->type != tt_identifier) {
+        log_error_token(token, "Expected interface name");
+        Ast err = {0};
+        return err;
+    }
+    char* interface_name = token_get_string(token);
+    token++;
+
+    if (token->type != tt_open_brace) {
+        log_error_token(token, "Expected open brace after interface name");
+        Ast err = {0};
+        return err;
+    }
+    token++;
+
+    Ast_List functions = ast_list_create(2);
+    while (true) {
+        if (token->type == tt_close_brace) {
+            break;
+        }
+        Ast function = ast_function_declaration_parse(&token);
+        if (function.type == ast_invalid) return function;
+        if (function.function_declaration.body != NULL) {
+            log_error_token(token, "Functions in interfaces can't have a body");
+            Ast err = {0};
+            return err;
+        }
+        ast_list_add(&functions, &function);
+        while (token->type == tt_end_statement) token++;
+    }
+    massert(token->type == tt_close_brace, "token type is not tt_close_brace");
+    token++;
+
+    ast.interface.name = interface_name;
+    ast.interface.functions = functions;
+    ast.num_tokens = token - ast.token;
+    *tokens = token;
+    return ast;
+}
+
 Ast ast_variable_declaration_parse(Token** tokens) {
     Token* token = *tokens;
     Ast variable_declaration = {0};
@@ -367,6 +414,9 @@ Ast ast_general_parse(Token** tokens) {
         case tt_end_of_file:
         case tt_end_statement:
             return ast_end_statement_parse(tokens);
+        case tt_interface: {
+            return ast_interface_parse(tokens);
+        }
         case tt_ref:
         case tt_close_brace:
         case tt_close_paren:
@@ -552,6 +602,7 @@ Ast ast_value_parse(Token** tokens) {
             return ast_string_parse(tokens);
         case tt_open_paren:
             return ast_parenthesized_expression_parse(tokens);
+        case tt_interface:
         case tt_end_of_file:
         case tt_end_statement:
         case tt_close_brace:

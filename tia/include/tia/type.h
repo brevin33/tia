@@ -66,6 +66,10 @@ typedef struct Type_Interface_Function {
     char* function_name;
 } Type_Interface_Function;
 
+typedef struct Type_Interface {
+    Type_Interface_Function_List functions;
+} Type_Interface;
+
 typedef struct Type_Base {
     Type_Type type;
     const char* name;
@@ -76,6 +80,7 @@ typedef struct Type_Base {
         Type_Uint uint;
         Type_Function function;
         Type_Multi_Value multi_value;
+        Type_Interface interface;
     };
 } Type_Base;
 
@@ -100,6 +105,9 @@ Type type_get_invalid_type();
 Type_Base* type_get_multi_value_type_base(Type_List* types);
 Type type_get_multi_value_type(Type_List* types);
 
+Type_Base* type_prototype_interface(Ast* ast);
+void type_implement_interface(Type_Base* type_base);
+
 Type_Base* type_find_base_type_without_int_finding(const char* name);
 Type_Base* type_find_base_type(const char* name);
 Type_Base* type_find_base_type_ast(Ast* ast);
@@ -121,6 +129,9 @@ bool type_base_is_invalid(Type_Base* type);
 bool type_is_invalid(Type* type);
 bool type_substitutions_is_equal(Type_Substitution_List* substitutions_a, Type_Substitution_List* substitutions_b);
 bool type_is_reference_of(Type* ref, Type* of);
+
+//returns the function return type
+Type type_interface_is_there_a_interface_function(Type_List* arguments, char* function_name);
 
 bool type_fullfills_interface(Type* type, Type* interface);
 

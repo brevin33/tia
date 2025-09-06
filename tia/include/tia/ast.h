@@ -22,6 +22,7 @@ typedef enum Ast_Type {
     ast_assignment,
     ast_multi_expression,
     ast_function_call,
+    ast_interface,
 } Ast_Type;
 
 typedef struct Ast_Function_Call {
@@ -97,6 +98,11 @@ typedef struct Ast_Multi_Expression {
     Ast_List expressions;
 } Ast_Multi_Expression;
 
+typedef struct Ast_Interface {
+    char* name;
+    Ast_List functions;
+} Ast_Interface;
+
 typedef struct Ast {
     Token* token;
     Ast_Type type;
@@ -115,6 +121,7 @@ typedef struct Ast {
         Ast_Assignment assignment;
         Ast_Multi_Expression multi_expression;
         Ast_Function_Call function_call;
+        Ast_Interface interface;
     };
 } Ast;
 
@@ -147,6 +154,8 @@ Ast ast_assignee_parse(Token** tokens);
 Ast ast_assignment_parse(Token** tokens);
 
 Ast ast_parenthesized_expression_parse(Token** tokens);
+
+Ast ast_interface_parse(Token** tokens);
 
 #define INVALID_PRECEDENCE INT64_MIN
 #define LOWEST_PRECEDENCE INT64_MIN + 1

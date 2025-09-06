@@ -819,3 +819,40 @@ Variable_LLVM_Value* variable_llvm_value_list_get(Variable_LLVM_Value_List* list
 void variable_llvm_value_list_pop(Variable_LLVM_Value_List* list) {
     list->count--;
 }
+
+Type_Interface_Function_List type_interface_function_list_create(u64 initial_size) {
+    Type_Interface_Function_List list;
+    if (initial_size == 0) {
+        list.data = NULL;
+        list.count = 0;
+        list.capacity = 0;
+    } else {
+        list.data = alloc(initial_size * sizeof(Type_Interface_Function));
+        list.count = 0;
+        list.capacity = initial_size;
+    }
+    return list;
+}
+
+Type_Interface_Function* type_interface_function_list_add(Type_Interface_Function_List* list, Type_Interface_Function* type_interface_function) {
+    if (list->count >= list->capacity) {
+        if (list->capacity == 0) {
+            list->capacity = 8;
+        }
+        list->capacity *= 2;
+        void* old_data = list->data;
+        list->data = alloc(list->capacity * sizeof(Type_Interface_Function));
+        memcpy(list->data, old_data, list->count * sizeof(Type_Interface_Function));
+    }
+    list->data[list->count] = *type_interface_function;
+    list->count++;
+    return &list->data[list->count - 1];
+}
+
+Type_Interface_Function* type_interface_function_list_get(Type_Interface_Function_List* list, u64 index) {
+    return &list->data[index];
+}
+
+void type_interface_function_list_pop(Type_Interface_Function_List* list) {
+    list->count--;
+}

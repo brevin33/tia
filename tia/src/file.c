@@ -17,6 +17,23 @@ char* file_get_line(File* file, u64 line_number) {
     return line;
 }
 
+void file_prototype_types(File* file) {
+    Ast* ast = file->ast;
+    Ast_File* file_ast = &ast->file;
+    for (u64 i = 0; i < file_ast->global_declarations.count; i++) {
+        Ast* global_declaration = ast_list_get(&file_ast->global_declarations, i);
+        switch (global_declaration->type) {
+            case ast_interface: {
+                Type_Base* type_base = type_prototype_interface(global_declaration);
+                type_base_pointer_list_add(&file->types, type_base);
+                break;
+            }
+            default:
+                break;
+        }
+    }
+}
+
 void file_prototype_functions(File* file) {
     Ast* ast = file->ast;
     Ast_File* file_ast = &ast->file;
@@ -31,6 +48,11 @@ void file_prototype_functions(File* file) {
 }
 
 void file_implement(File* file) {
+    for (u64 i = 0; i < file->types.count; i++) {
+        Type_Base* type_base = type_base_pointer_list_get_type_base(&file->types, i);
+        type_implement_interface(type_base);
+    }
+
     for (u64 i = 0; i < file->functions.count; i++) {
         Function* function = function_pointer_list_get_function(&file->functions, i);
         function_implement(function);
@@ -83,7 +105,7 @@ u64 file_get_lines(File* file, u64 t_start_index, u64 t_end_index, u64* out_coun
     char* file_contents = file->contents;
 
     u64 start_index;
-    for (start_index = t_start_index; start_index >= 0; start_index--)
+    for (start_index = t_start_index; start_index > 0; start_index--)
         if (file_contents[start_index] == '\n') break;
     if (start_index > 0) start_index++;  // skip the newline
 

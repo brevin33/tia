@@ -19,6 +19,7 @@ typedef enum TokenType_ {
     tt_equal,
     tt_comma,
     tt_ref,
+    tt_interface,
 } TokenType_;
 
 typedef struct Token {

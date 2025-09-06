@@ -257,3 +257,15 @@ Variable_LLVM_Value_List variable_llvm_value_list_create(u64 initial_size);
 Variable_LLVM_Value* variable_llvm_value_list_add(Variable_LLVM_Value_List* list, Variable_LLVM_Value* variable_llvm_value);
 Variable_LLVM_Value* variable_llvm_value_list_get(Variable_LLVM_Value_List* list, u64 index);
 void variable_llvm_value_list_pop(Variable_LLVM_Value_List* list);
+
+typedef struct Type_Interface_Function Type_Interface_Function;
+typedef struct {
+    Type_Interface_Function* data;
+    u64 count;
+    u64 capacity;
+} Type_Interface_Function_List;
+
+Type_Interface_Function_List type_interface_function_list_create(u64 initial_size);
+Type_Interface_Function* type_interface_function_list_add(Type_Interface_Function_List* list, Type_Interface_Function* type_interface_function);
+Type_Interface_Function* type_interface_function_list_get(Type_Interface_Function_List* list, u64 index);
+void type_interface_function_list_pop(Type_Interface_Function_List* list);
