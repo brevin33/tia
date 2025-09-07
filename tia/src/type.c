@@ -1,6 +1,7 @@
 #include "tia/type.h"
 #include <llvm-c/Core.h>
 #include "tia.h"
+#include "tia/function.h"
 #include "tia/lists.h"
 
 void init_types() {
@@ -193,24 +194,52 @@ Type_Base* type_find_base_type(const char* name) {
     return type_get_invalid_type_base();
 }
 
-Type type_find(const char* name) {
-    Type type = {0};
-    Type_Base* type_base = type_find_base_type(name);
-    type.base = type_base;
-    return type;
-}
+// Type type_find(const char* name) {
+//     Type type = {0};
+//     Type_Base* type_base = type_find_base_type(name);
+//     type.base = type_base;
+//     return type;
+// }
 
-Type type_find_ast(Ast* ast, bool log_error) {
+Type type_find_ast(Ast* ast, bool log_error, u64* ref_interface_instance_number_count_down_from) {
     massert(ast->type == ast_type, "ast is not ast_type");
     char* name = ast->type_info.name;
-    Type type = type_find(name);
-    if (type.base->type == type_invalid) {
+    Type_Base* type_base = type_find_base_type_ast(ast);
+    if (type_base->type == type_invalid) {
         if (log_error) {
             log_error_ast(ast, "Type %s not found", name);
         }
     }
+    Type type = {0};
     type.ast = ast;
     type.modifiers = ast->type_info.modifiers;
+    type.base = type_base;
+
+    Type_Type base_type_type = type_base->type;
+    type.interface_instance_number = ast->type_info.interface_instace_number;
+    if (base_type_type != type_interface && type.interface_instance_number != INTERFACE_INSTANCE_NUMBER_UNSPECIFIED) {
+        log_error_ast(ast, "Type %s is not an interface so it can't have an interface instance number", name);
+        return type_get_invalid_type();
+    }
+
+    if (base_type_type == type_interface) {
+        u64 interface_instance_number = type.interface_instance_number;
+        if (interface_instance_number == INTERFACE_INSTANCE_NUMBER_UNSPECIFIED) {
+            type.interface_instance_number = *ref_interface_instance_number_count_down_from;
+            *ref_interface_instance_number_count_down_from = *ref_interface_instance_number_count_down_from - 1;
+        }
+    }
+
+    Type_Type type_type = type_get_type(&type);
+    if (type_type == type_ref) {
+        // interface can't have references
+        Type_Type base_type_type = type.base->type;
+        if (base_type_type == type_interface) {
+            log_error_ast(ast, "can't have reference to a interface", name);
+            return type_get_invalid_type();
+        }
+    }
+
     return type;
 }
 
@@ -276,13 +305,14 @@ Type_Base* type_prototype_interface(Ast* ast) {
 void type_implement_interface(Type_Base* type_base) {
     Ast* ast = type_base->ast;
     massert(ast != NULL, "type_base->ast is NULL");
+    u64 interface_instance_number_count_down_from = UINT64_MAX;
 
     Ast_Interface* interface = &ast->interface;
     for (u64 i = 0; i < interface->functions.count; i++) {
         Ast* function = ast_list_get(&interface->functions, i);
         massert(function->type == ast_function_declaration, "function->type is not ast_function_declaration");
         Ast_Function_Declaration* function_declaration = &function->function_declaration;
-        Type return_type = type_find_ast(function_declaration->return_type, true);
+        Type return_type = type_find_ast(function_declaration->return_type, true, NULL);
 
         Type_List parameters = type_list_create(function_declaration->parameters.count);
         if (return_type.base->type == type_invalid) {
@@ -293,7 +323,7 @@ void type_implement_interface(Type_Base* type_base) {
             Ast* parameter = ast_list_get(&function_declaration->parameters, j);
             massert(parameter->type == ast_variable_declaration, "parameter->type is not ast_variable_declaration");
             Ast_Variable_Declaration* parameter_declaration = &parameter->variable_declaration;
-            Type parameter_type = type_find_ast(parameter_declaration->type, true);
+            Type parameter_type = type_find_ast(parameter_declaration->type, true, &interface_instance_number_count_down_from);
             if (parameter_type.base->type == type_invalid) {
                 type_base->type = type_invalid;
                 return;
@@ -336,6 +366,23 @@ char* type_get_name(Type* type) {
         }
     }
     name[count] = '\0';
+
+    u64 name_len = strlen(name);
+    Type_Base* base = type->base;
+    if (base->type == type_interface) {
+        char* extra_type_info_name = alloc(name_len + 40);
+        if (type->interface_instance_number == INTERFACE_INSTANCE_NUMBER_UNSPECIFIED) {
+            sprintf(extra_type_info_name, "%s(instance:unspecified)", name);
+        } else if (type->interface_instance_number <= UINT32_MAX) {
+            sprintf(extra_type_info_name, "%s(instance:%llu)", name, type->interface_instance_number);
+        } else {
+            u64 interface_instance_number = type->interface_instance_number;
+            u64 inverse_interface_instance_number = UINT64_MAX - interface_instance_number;
+            sprintf(extra_type_info_name, "%s(compiler instance:%llu)", name, inverse_interface_instance_number);
+        }
+        return extra_type_info_name;
+    }
+
     return name;
 }
 
@@ -450,16 +497,25 @@ Type type_get_real_type(Type* type, Type_Substitution_List* substitutions) {
                 Type_Base* base_type = type->base;
                 Type_Base* substituted_type = substitution->substituted_type;
                 if (base_type == substituted_type) {
-                    Type new_type;
-                    new_type.modifiers = type_modifier_list_create(8);
-                    massert(type->modifiers.count == 0, "type->modifiers.count != 0");
-                    for (u64 j = 0; j < substitution->new_type.modifiers.count; j++) {
-                        Type_Modifier* modifier = type_modifier_list_get(&substitution->new_type.modifiers, j);
-                        type_modifier_list_add(&new_type.modifiers, modifier);
+                    u64 interface_instance_number = substitution->interface_instance_number;
+                    Type_Type base_type_type = base_type->type;
+                    massert(base_type_type == type_interface, "base_type_type != type_interface");
+                    u64 base_type_interface_instance_number = type->interface_instance_number;
+                    massert(base_type_interface_instance_number != INTERFACE_INSTANCE_NUMBER_UNSPECIFIED, "base_type_interface_instance_number == INTERFACE_INSTANCE_NUMBER_UNSPECIFIED");  //should have gotten specified at some point
+                    if (interface_instance_number == base_type_interface_instance_number) {
+                        Type new_type;
+                        new_type.modifiers = type_modifier_list_create(8);
+                        massert(type->modifiers.count == 0, "type->modifiers.count != 0");
+                        for (u64 j = 0; j < substitution->new_type.modifiers.count; j++) {
+                            Type_Modifier* modifier = type_modifier_list_get(&substitution->new_type.modifiers, j);
+                            type_modifier_list_add(&new_type.modifiers, modifier);
+                        }
+                        new_type.ast = type->ast;
+                        new_type.base = substitution->new_type.base;
+                        massert(substitution->new_type.base->type != type_interface, "substitution->new_type.base->type == type_interface");  //maybe do somthing to make this work
+                        new_type.interface_instance_number = INTERFACE_INSTANCE_NUMBER_UNSPECIFIED;
+                        return new_type;
                     }
-                    new_type.ast = type->ast;
-                    new_type.base = substitution->new_type.base;
-                    return new_type;
                 }
             }
             return *type;
@@ -467,7 +523,13 @@ Type type_get_real_type(Type* type, Type_Substitution_List* substitutions) {
         case type_ref: {
             Type deref_type = type_deref(type);
             deref_type = type_get_real_type(&deref_type, substitutions);
-            return type_get_reference(&deref_type);
+            Type_Type deref_type_type = type_get_type(&deref_type);
+            // i think this should be fine
+            if (deref_type_type == type_ref) {
+                return deref_type;
+            } else {
+                return type_get_reference(&deref_type);
+            }
         }
         case type_function: {
             Type_List new_parameters = type_list_create(type->base->function.parameters.count);
@@ -541,14 +603,33 @@ bool type_fullfills_interface(Type* type, Type* interface) {
         return true;
     }
 
-    Type_Interface* i = &type->base->interface;
+    Type_Interface* i = &interface->base->interface;
     Type_Interface_Function_List* functions = &i->functions;
     for (u64 i = 0; i < functions->count; i++) {
-        Type_Interface_Function* function = type_interface_function_list_get(functions, i);
-        Function_Find_Result function_find_result = function_find(&function->function_type.base->function.parameters, function->function_name, NULL, false);
-        if (function_find_result.function == NULL && type_is_invalid(&function_find_result.there_is_an_interface_function_return_type)) {
+        Type_Interface_Function* ifunction = type_interface_function_list_get(functions, i);
+        Type ireturn_type = ifunction->function_type.base->function.return_type;
+
+        Type_List replaced_parameters = type_list_create(ifunction->function_type.base->function.parameters.count);
+        for (u64 j = 0; j < ifunction->function_type.base->function.parameters.count; j++) {
+            Type* parameter = type_list_get(&ifunction->function_type.base->function.parameters, j);
+            if (type_is_equal(parameter, interface)) {
+                type_list_add(&replaced_parameters, type);
+            } else {
+                type_list_add(&replaced_parameters, parameter);
+            }
+        }
+
+        Function_Find_Result function_find_result = function_find(&replaced_parameters, ifunction->function_name, NULL, false, false);
+        if (function_find_result.function == NULL) {
             return false;
         }
+        Function* function = function_find_result.function;
+        Type* return_type = function_get_return_type(function);
+        Type real_return_type = type_get_real_type(return_type, &function_find_result.substitutions);
+        bool can_implicit_cast = expression_can_implicitly_cast(&ireturn_type, &real_return_type);
+        if (can_implicit_cast) continue;
+        // TODO: interface check
+        return false;
     }
     return true;
 }
@@ -588,9 +669,11 @@ Type type_interface_is_there_a_interface_function(Type_List* arguments, char* fu
                         for (u64 k = 0; k < substitutions.count; k++) {
                             Type_Substitution* substitution_k = type_substitution_list_get(&substitutions, k);
                             if (substitution_k->substituted_type == substitution.substituted_type) {
-                                if (!type_is_equal(&substitution_k->new_type, &substitution.new_type)) {
-                                    fits = false;
-                                    break;
+                                if (substitution_k->interface_instance_number == substitution.interface_instance_number) {
+                                    if (!type_is_equal(&substitution_k->new_type, &substitution.new_type)) {
+                                        fits = false;
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -624,10 +707,12 @@ bool type_substitutions_is_equal(Type_Substitution_List* substitutions_a, Type_S
         bool found = false;
         for (u64 j = 0; j < substitutions_b->count; j++) {
             Type_Substitution* substitution_b = type_substitution_list_get(substitutions_b, j);
-            if (substitution_a->substituted_type == substitution_b->substituted_type) {
-                if (type_is_equal(&substitution_a->new_type, &substitution_b->new_type)) {
-                    found = true;
-                    break;
+            if (substitution_a->interface_instance_number == substitution_b->interface_instance_number) {
+                if (substitution_a->substituted_type == substitution_b->substituted_type) {
+                    if (type_is_equal(&substitution_a->new_type, &substitution_b->new_type)) {
+                        found = true;
+                        break;
+                    }
                 }
             }
         }
@@ -638,6 +723,7 @@ bool type_substitutions_is_equal(Type_Substitution_List* substitutions_a, Type_S
 
 bool type_is_equal(Type* type_a, Type* type_b) {
     if (type_a->base != type_b->base) return false;
+    if (type_a->interface_instance_number != type_b->interface_instance_number) return false;
     if (type_a->modifiers.count != type_b->modifiers.count) return false;
     for (u64 i = 0; i < type_a->modifiers.count; i++) {
         Type_Modifier* modifier_a = type_modifier_list_get(&type_a->modifiers, i);

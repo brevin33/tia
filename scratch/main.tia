@@ -1,24 +1,15 @@
-interface Fooer{
-	i32 foo(Fooer a)
-}
-
-i32 foo(i32 a){
+i32 test2(i32 a){
+	any$8 b = test(a)
 	return a
 }
 
-i32 foo(i16 a){
+any$1 test(any$1 a){
 	return a
-}
-
-i32 call_foo(Fooer a){
-	return foo(a)
 }
 
 i32 main(){
-	i32 a = 8
-	i32 b = call_foo(a)
-	i16 yo = 9
-	i32 c = call_foo(yo)
-	return c
+	i32 a = test2(1)
+	return a
 }
+
 

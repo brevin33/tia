@@ -55,9 +55,12 @@ typedef struct Ast_Variable_Declaration {
     char* name;
 } Ast_Variable_Declaration;
 
+#define INTERFACE_INSTANCE_NUMBER_UNSPECIFIED 0
+#define INTERFACE_INSTANCE_NUMBER_VARIABLE_WAITING_TO_BE_OVERRIDDEN_OFFSET UINT32_MAX + 1
 typedef struct Ast_Type_Info {
     char* name;
     Type_Modifier_List modifiers;
+    u64 interface_instace_number;
 } Ast_Type_Info;
 
 typedef struct Ast_Return {

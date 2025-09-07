@@ -190,6 +190,11 @@ Token_List token_get_tokens(File* file) {
                 token.type = tt_ref;
                 break;
             }
+            case '$': {
+                index++;
+                token.type = tt_dollar;
+                break;
+            }
             default: {
                 index++;
                 token.type = tt_invalid;
@@ -223,6 +228,7 @@ bool token_causes_endline_to_be_endstatement(Token* token) {
         case tt_close_bracket:
             return true;
         case tt_interface:
+        case tt_dollar:
         case tt_ref:
         case tt_end_statement:
         case tt_end_of_file:

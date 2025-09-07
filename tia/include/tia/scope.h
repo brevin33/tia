@@ -7,7 +7,6 @@ typedef struct Function Function;
 typedef struct Variable {
     char* name;
     Type type;
-    bool is_ref;
 } Variable;
 
 typedef struct Variable_LLVM_Value {

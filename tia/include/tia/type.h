@@ -18,6 +18,7 @@ typedef struct Type {
     Ast* ast;
     Type_Base* base;
     Type_Modifier_List modifiers;
+    u64 interface_instance_number;
 } Type;
 
 typedef enum Type_Type {
@@ -54,6 +55,7 @@ typedef struct Type_Function {
 
 typedef struct Type_Substitution {
     Type_Base* substituted_type;
+    u64 interface_instance_number;
     Type new_type;
 } Type_Substitution;
 
@@ -111,8 +113,8 @@ void type_implement_interface(Type_Base* type_base);
 Type_Base* type_find_base_type_without_int_finding(const char* name);
 Type_Base* type_find_base_type(const char* name);
 Type_Base* type_find_base_type_ast(Ast* ast);
-Type type_find(const char* name);
-Type type_find_ast(Ast* ast, bool log_error);
+// Type type_find(const char* name);
+Type type_find_ast(Ast* ast, bool log_error, u64* ref_interface_instance_number_count_down_from);
 
 char* type_get_name(Type* type);
 char* get_function_type_name(Type_List* parameters, Type return_type);

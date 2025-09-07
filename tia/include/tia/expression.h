@@ -73,19 +73,19 @@ typedef struct Expression_To_LLVM_Value {
     LLVMValueRef value;
 } Expression_To_LLVM_Value;
 
-Expression expression_create(Ast* ast, Scope* scope);
+Expression expression_create(Ast* ast, Scope* scope, Function* in_function);
 
-Expression expression_create_number_literal(Ast* ast, Scope* scope);
+Expression expression_create_number_literal(Ast* ast, Scope* scope, Function* in_function);
 
-Expression expression_create_variable(Ast* ast, Scope* scope);
+Expression expression_create_variable(Ast* ast, Scope* scope, Function* in_function);
 
-Expression expression_create_biop(Ast* ast, Scope* scope);
+Expression expression_create_biop(Ast* ast, Scope* scope, Function* in_function);
 
-Expression expression_create_word(Ast* ast, Scope* scope);
+Expression expression_create_word(Ast* ast, Scope* scope, Function* in_function);
 
-Expression expression_create_multi_expression(Ast* ast, Scope* scope);
+Expression expression_create_multi_expression(Ast* ast, Scope* scope, Function* in_function);
 
-Expression expression_create_function_call(Ast* ast, Scope* scope);
+Expression expression_create_function_call(Ast* ast, Scope* scope, Function* in_function);
 
 bool expression_can_implicitly_cast_without_deref(Type* expression, Type* type);
 

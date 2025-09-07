@@ -23,12 +23,6 @@ Variable* scope_add_variable(Scope* scope, Variable* variable) {
 
     Type_Type var_type_type = type_get_type(&variable->type);
     Variable var = *variable;
-    var.is_ref = false;
-    if (var_type_type == type_ref) {
-        var.is_ref = true;
-        Type deref_type = type_deref(&variable->type);
-        var.type = deref_type;
-    }
 
     Variable* in_list_variable = variable_list_add(&scope->variables, &var);
     return in_list_variable;
@@ -59,8 +53,12 @@ bool scope_compile_scope(Scope* scope, Function* func, Type_Substitution_List* s
         Variable* variable = variable_list_get(&scope->variables, i);
         Variable_LLVM_Value v = {0};
         v.variable = variable;
-        if (variable->is_ref) {
+        Type* variable_type = &variable->type;
+        Type real_variable_type = type_get_real_type(variable_type, substitutions);
+        Type_Type real_variable_type_type = type_get_type(&real_variable_type);
+        if (real_variable_type_type == type_ref) {
             v.value = NULL;
+            // don't add here we add in the variable declaration
         } else {
             LLVMTypeRef variable_type = type_get_llvm_type(&variable->type, substitutions);
             v.value = LLVMBuildAlloca(context.llvm_info.builder, variable_type, variable->name);

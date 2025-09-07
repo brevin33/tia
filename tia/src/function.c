@@ -12,9 +12,39 @@ void function_implement(Function* function) {
     scope_add_statements(&function->body_scope, body_ast, function);
 }
 
-Function_Find_Result function_find(Type_List* parameters, char* name, Ast* ast, bool log_error) {
-    Type interface_function_return_type = type_interface_is_there_a_interface_function(parameters, name);
-    bool has_interface_function = !type_is_invalid(&interface_function_return_type);
+void function_add_constant_substitution_with_interface_instance_number(Function* function, Type_Substitution* substitution, u64 interface_instance_number) {
+    substitution->interface_instance_number = interface_instance_number;
+    type_substitution_list_add(&function->constant_substitutions, substitution);
+}
+
+u64 function_add_constant_substitution(Function* function, Type_Substitution* substitution) {
+    u64 sub_instance = function->interface_instance_number_count_down_from++;
+    substitution->interface_instance_number = sub_instance;
+    type_substitution_list_add(&function->constant_substitutions, substitution);
+    return sub_instance;
+}
+
+Type_Substitution function_find_constant_substitution(Function* function, u64 interface_instance_number) {
+    for (u64 i = 0; i < function->constant_substitutions.count; i++) {
+        Type_Substitution* substitution = type_substitution_list_get(&function->constant_substitutions, i);
+        if (substitution->interface_instance_number == interface_instance_number) {
+            return *substitution;
+        }
+    }
+    Type_Substitution substitution = {0};
+    substitution.new_type = type_get_invalid_type();
+    substitution.interface_instance_number = interface_instance_number;
+    substitution.substituted_type = type_get_invalid_type_base();
+    return (Type_Substitution){0};
+}
+
+Function_Find_Result function_find(Type_List* parameters, char* name, Ast* ast, bool log_error, bool allow_interface_function) {
+    Type interface_function_return_type;
+    bool has_interface_function = false;
+    if (allow_interface_function) {
+        interface_function_return_type = type_interface_is_there_a_interface_function(parameters, name);
+        has_interface_function = !type_is_invalid(&interface_function_return_type);
+    }
 
     Function_Pointer_List* functions = &context.functions;
     Function_Pointer_List maybe_functions = function_pointer_list_create(8);
@@ -37,6 +67,12 @@ Function_Find_Result function_find(Type_List* parameters, char* name, Ast* ast, 
         bool match = true;
         for (u64 j = 0; j < function_type->base->function.parameters.count; j++) {
             Type* parameter_type = type_list_get(&function_type->base->function.parameters, j);
+            Type_Base* parameter_type_base = parameter_type->base;
+            Type_Type parameter_type_base_type = parameter_type_base->type;
+            if (parameter_type_base_type == type_interface) {
+                match = false;
+                break;
+            }
             Type* parameter = type_list_get(parameters, j);
             if (!type_is_equal(parameter, parameter_type)) {
                 match = false;
@@ -56,6 +92,12 @@ Function_Find_Result function_find(Type_List* parameters, char* name, Ast* ast, 
             bool match = true;
             for (u64 j = 0; j < function_type->base->function.parameters.count; j++) {
                 Type* parameter_type = type_list_get(&function_type->base->function.parameters, j);
+                Type_Base* parameter_type_base = parameter_type->base;
+                Type_Type parameter_type_base_type = parameter_type_base->type;
+                if (parameter_type_base_type == type_interface) {
+                    match = false;
+                    break;
+                }
                 Type* parameter = type_list_get(parameters, j);
                 if (type_is_equal(parameter, parameter_type)) {
                     continue;
@@ -82,6 +124,12 @@ Function_Find_Result function_find(Type_List* parameters, char* name, Ast* ast, 
                 bool match = true;
                 for (u64 j = 0; j < function_type->base->function.parameters.count; j++) {
                     Type* parameter_type = type_list_get(&function_type->base->function.parameters, j);
+                    Type_Base* parameter_type_base = parameter_type->base;
+                    Type_Type parameter_type_base_type = parameter_type_base->type;
+                    if (parameter_type_base_type == type_interface) {
+                        match = false;
+                        break;
+                    }
                     Type* parameter = type_list_get(parameters, j);
                     bool can_implicit_cast = expression_can_implicitly_cast(parameter, parameter_type);
                     if (!can_implicit_cast) {
@@ -94,42 +142,53 @@ Function_Find_Result function_find(Type_List* parameters, char* name, Ast* ast, 
                 }
             }
             if (match_functions.count == 0) {
+                // interface match
                 for (u64 i = 0; i < maybe_functions.count; i++) {
                     Function* function = function_pointer_list_get_function(&maybe_functions, i);
                     Type* function_type = &function->type;
                     Type_Substitution_List substitutions = type_substitution_list_create(4);
                     bool match = true;
+                    u64 interface_instance_number_count_down_from = UINT64_MAX;
                     for (u64 j = 0; j < function_type->base->function.parameters.count; j++) {
                         if (match == false) break;
                         Type* parameter_type = type_list_get(&function_type->base->function.parameters, j);
+                        Type_Base* parameter_type_base = parameter_type->base;
+                        Type_Type parameter_type_base_type = parameter_type_base->type;
                         Type* parameter = type_list_get(parameters, j);
-                        bool can_implicit_cast = expression_can_implicitly_cast(parameter, parameter_type);
-                        if (!can_implicit_cast) {
-                            if (parameter_type->base->type == type_interface) {
-                                bool fullfills = type_fullfills_interface(parameter, parameter_type);
-                                if (!fullfills) {
-                                    match = false;
-                                    break;
-                                }
-                                // say what we need to add to the substitutions
-                                Type_Substitution substitution = {0};
-                                substitution.substituted_type = parameter_type->base;
-                                substitution.new_type = *parameter;
-                                // make sure base type is not already being substituted
-                                for (u64 k = 0; k < substitutions.count; k++) {
-                                    Type_Substitution* substitution_k = type_substitution_list_get(&substitutions, k);
-                                    if (substitution_k->substituted_type == substitution.substituted_type) {
+                        if (parameter_type_base_type == type_interface) {
+                            bool fullfills = type_fullfills_interface(parameter, parameter_type);
+                            if (!fullfills) {
+                                match = false;
+                                break;
+                            }
+                            // say what we need to add to the substitutions
+                            Type_Substitution substitution = {0};
+                            substitution.substituted_type = parameter_type->base;
+                            substitution.new_type = *parameter;
+                            substitution.interface_instance_number = parameter_type->interface_instance_number;
+                            massert(substitution.interface_instance_number != INTERFACE_INSTANCE_NUMBER_UNSPECIFIED, "substitution.interface_instance_number == INTERFACE_INSTANCE_NUMBER_UNSPECIFIED");
+                            // make sure base type is not already being substituted
+                            for (u64 k = 0; k < substitutions.count; k++) {
+                                Type_Substitution* substitution_k = type_substitution_list_get(&substitutions, k);
+                                if (substitution_k->substituted_type == substitution.substituted_type) {
+                                    if (substitution_k->interface_instance_number == substitution.interface_instance_number) {
                                         if (!type_is_equal(&substitution_k->new_type, &substitution.new_type)) {
                                             match = false;
                                             break;
                                         }
                                     }
                                 }
-                                type_substitution_list_add(&substitutions, &substitution);
-                            } else {
-                                match = false;
-                                break;
                             }
+                            type_substitution_list_add(&substitutions, &substitution);
+                            continue;
+                        } else {
+                            match = false;
+                            break;
+                        }
+                        bool can_implicit_cast = expression_can_implicitly_cast(parameter, parameter_type);
+                        if (!can_implicit_cast) {
+                            match = false;
+                            break;
                         }
                     }
                     if (match) {
@@ -187,9 +246,7 @@ Function_Find_Result function_find(Type_List* parameters, char* name, Ast* ast, 
         }
         return (Function_Find_Result){0};
     }
-    if (has_interface_function) {
-        i32 a = 8;
-    }
+
     Function_Find_Result result = {0};
     result.function = function_pointer_list_get_function(&match_functions, 0);
     result.substitutions = the_substitutions;
@@ -207,9 +264,11 @@ Function* function_new(Ast* ast) {
     function->ast = ast;
     function->parameters_scope = scope_create(NULL);
     function->body_scope = scope_create(&function->parameters_scope);
+    function->interface_instance_number_count_down_from = UINT64_MAX;
+    function->constant_substitutions = type_substitution_list_create(0);
 
     Ast* return_type_ast = function_declaration->return_type;
-    Type return_type = type_find_ast(return_type_ast, true);
+    Type return_type = type_find_ast(return_type_ast, true, &function->interface_instance_number_count_down_from);
 
     u64 parameter_count = function_declaration->parameters.count;
     Type_List parameters = type_list_create(parameter_count);
@@ -220,12 +279,14 @@ Function* function_new(Ast* ast) {
         Ast_Variable_Declaration* parameter_declaration = &parameter_ast->variable_declaration;
 
         Ast* parameter_type_ast = parameter_declaration->type;
-        Type parameter_type = type_find_ast(parameter_type_ast, true);
+        Type parameter_type = type_find_ast(parameter_type_ast, true, &function->interface_instance_number_count_down_from);
+
         type_list_add(&parameters, &parameter_type);
 
         Variable variable = {0};
         variable.name = parameter_declaration->name;
         variable.type = parameter_type;
+
         Variable* in_list_variable = scope_add_variable(&function->parameters_scope, &variable);
         if (in_list_variable == NULL) {
             log_error_ast(parameter_ast, "Multiple declarations of parameter with name %s", parameter_declaration->name);
@@ -233,7 +294,6 @@ Function* function_new(Ast* ast) {
     }
     function->type = type_get_function_type(&parameters, return_type);
     function->name = function_declaration->name;
-
     return function;
 }
 
@@ -317,11 +377,16 @@ LLVMValueRef function_compile_llvm(Function* function, Type_Substitution_List* s
     if (strcmp(function->name, "main") == 0) {
         mangled_name = function->name;
     }
+    LLVM_Type_Substitutions_To_LLVM_Value v = {0};
+    v.substitutions = type_substitution_list_copy(substitutions);
+
+    for (u64 i = 0; i < function->constant_substitutions.count; i++) {
+        Type_Substitution* substitution = type_substitution_list_get(&function->constant_substitutions, i);
+        type_substitution_list_add(substitutions, substitution);
+    }
 
     LLVMValueRef function_value = LLVMAddFunction(context.llvm_info.module, mangled_name, function_type_llvm);
     LLVM_Type_Substitutions_To_LLVM_Value_List* function_value_by_substitutions = &function->llvm_info.function_value_by_substitutions;
-    LLVM_Type_Substitutions_To_LLVM_Value v = {0};
-    v.substitutions = type_substitution_list_copy(substitutions);
     v.value = function_value;
     llvm_type_substitutions_to_llvm_value_list_add(function_value_by_substitutions, &v);
 
@@ -340,7 +405,10 @@ LLVMValueRef function_compile_llvm(Function* function, Type_Substitution_List* s
         Variable_LLVM_Value v = {0};
         v.variable = variable;
         LLVMValueRef param_value = LLVMGetParam(function_value, i);
-        if (variable->is_ref) {
+        Type* variable_type = &variable->type;
+        Type real_variable_type = type_get_real_type(variable_type, substitutions);
+        Type_Type variable_type_type = type_get_type(&real_variable_type);
+        if (variable_type_type == type_ref) {
             v.value = param_value;
         } else {
             LLVMTypeRef param_type = type_get_llvm_type(&variable->type, substitutions);

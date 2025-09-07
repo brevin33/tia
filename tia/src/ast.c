@@ -1,4 +1,5 @@
 #include "tia.h"
+#include "tia/basic.h"
 #include "tia/lists.h"
 #include "tia/token.h"
 
@@ -69,6 +70,12 @@ bool ast_parseable_as_type(Token** tokens) {
     Token* token = *tokens;
     if (token->type != tt_identifier) return false;
     token++;
+    if (token->type == tt_dollar) {
+        token++;
+        if (token->type != tt_number) return false;
+        token++;
+    }
+
     // TODO: type modifiers like ptr
     while (true) {
         switch (token->type) {
@@ -96,6 +103,39 @@ Ast ast_type_parse(Token** tokens) {
     char* type_name = token_get_string(token);
     type.type_info.name = type_name;
     token++;
+
+    if (token->type == tt_dollar) {
+        token++;
+        if (token->type != tt_number) {
+            log_error_token(token, "Expected number for interface instance");
+            Ast err = {0};
+            return err;
+        }
+        char* number = token_get_string(token);
+        token++;
+        bool is_float = is_number_float(number);
+        if (is_float) {
+            log_error_token(token, "Expected number for interface instance to not be a float");
+            Ast err = {0};
+            return err;
+        }
+        bool error;
+        u64 interface_instance_number = get_string_uint(number, &error);
+        if (interface_instance_number > UINT32_MAX) {
+            log_error_token(token, "Interface instance number is too large. Max is UINT32_MAX");
+            Ast err = {0};
+            return err;
+        }
+
+        if (error) {
+            log_error_token(token, "Error with number for interface instance");
+            Ast err = {0};
+            return err;
+        }
+        type.type_info.interface_instace_number = interface_instance_number;
+    } else {
+        type.type_info.interface_instace_number = INTERFACE_INSTANCE_NUMBER_UNSPECIFIED;
+    }
 
     Type_Modifier_List modifiers = type_modifier_list_create(2);
     while (true) {
@@ -421,6 +461,7 @@ Ast ast_general_parse(Token** tokens) {
         case tt_close_brace:
         case tt_close_paren:
         case tt_comma:
+        case tt_dollar:
         case tt_equal:
         case tt_close_bracket: {
             log_error_token(token, "Unexpected token");
@@ -605,6 +646,7 @@ Ast ast_value_parse(Token** tokens) {
         case tt_interface:
         case tt_end_of_file:
         case tt_end_statement:
+        case tt_dollar:
         case tt_close_brace:
         case tt_close_paren:
         case tt_ref:

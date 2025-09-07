@@ -1,3 +1,4 @@
+#include <complex.h>
 #include <sys/stat.h>
 #include "tia.h"
 #include "tia/expression.h"
@@ -22,6 +23,7 @@ Statement statement_create(Ast* ast, Scope* scope, Function* function) {
             return statement_create_assignment(ast, scope, function);
         case ast_variable_declaration:
         case ast_file:
+        case ast_interface:
         case ast_function_declaration:
         case ast_invalid: {
             massert(false, "unexpected statement");
@@ -45,7 +47,12 @@ Statement statement_create_assignment(Ast* ast, Scope* scope, Function* function
             char* variable_name = variable_declaration->name;
             Variable variable = {0};
             variable.name = variable_name;
-            variable.type = type_find_ast(variable_declaration->type, true);
+            variable.type = type_find_ast(variable_declaration->type, true, &function->interface_instance_number_count_down_from);
+            if (variable.type.interface_instance_number >= UINT32_MAX) {
+                variable.type.interface_instance_number = INTERFACE_INSTANCE_NUMBER_UNSPECIFIED;  // we will figure this out when it is assigned
+            } else {
+                variable.type.interface_instance_number += INTERFACE_INSTANCE_NUMBER_VARIABLE_WAITING_TO_BE_OVERRIDDEN_OFFSET;
+            }
             Variable* in_list_variable = scope_add_variable(scope, &variable);
             if (in_list_variable == NULL) {
                 log_error_ast(assignee_ast->variable_declaration, "Already declared variable with name %s", variable_name);
@@ -56,7 +63,7 @@ Statement statement_create_assignment(Ast* ast, Scope* scope, Function* function
         } else {
             assignee.is_variable_declaration = false;
             Ast* expression_ast = assignee_ast->expression;
-            Expression expression = expression_create(expression_ast, scope);
+            Expression expression = expression_create(expression_ast, scope, function);
             if (expression.expr_type == et_invalid) {
                 Statement err = {0};
                 return err;
@@ -76,7 +83,7 @@ Statement statement_create_assignment(Ast* ast, Scope* scope, Function* function
 
     Ast* value_ast = assignment_ast->value;
     if (value_ast != NULL) {
-        Expression value = expression_create(value_ast, scope);
+        Expression value = expression_create(value_ast, scope, function);
         if (value.expr_type == et_invalid) {
             Statement err = {0};
             return err;
@@ -92,19 +99,30 @@ Statement statement_create_assignment(Ast* ast, Scope* scope, Function* function
                 return err;
             }
             for (u64 i = 0; i < multi_expression->expressions.count; i++) {
+                Expression value = multi_expression->expressions.data[i];
                 Assignee* assignee = assignees_list_get(&assignees, i);
                 Type assignee_type = *statement_get_assignee_type(assignee);
                 if (assignee->is_variable_declaration) {
-                    if (assignee->variable->is_ref) {
-                        Type ref_type = type_get_reference(&assignee_type);
-                        assignee_type = ref_type;
-                    } else {
-                        // do nothing
+                    Variable* variable = assignee->variable;
+                    Type_Base* assignee_type_base = assignee_type.base;
+                    Type_Type assignee_type_base_type = assignee_type_base->type;
+                    if (assignee_type_base_type == type_interface) {
                     }
                 } else {
                     Type deref_type = type_deref(&assignee_type);
                     assignee_type = deref_type;
                 }
+
+                Type_Base* assignee_type_base = assignee_type.base;
+                Type_Type assignee_type_base_type = assignee_type_base->type;
+                Type_Base* value_type_base = value.type.base;
+                Type_Type value_type_base_type = value_type_base->type;
+                if (assignee_type_base_type == type_interface && value_type_base_type == type_interface && assignee_type.interface_instance_number == INTERFACE_INSTANCE_NUMBER_UNSPECIFIED) {
+                    assignee_type.interface_instance_number = value.type.interface_instance_number;
+                    Type* assignee_type_ref = statement_get_assignee_type(assignee);
+                    *assignee_type_ref = assignee_type;
+                }
+
                 Expression value_expression = expression_implicitly_cast(&multi_expression->expressions.data[i], &assignee_type);
                 if (value_expression.expr_type == et_invalid) {
                     Statement err = {0};
@@ -123,16 +141,40 @@ Statement statement_create_assignment(Ast* ast, Scope* scope, Function* function
             Assignee* assignee = assignees_list_get(&assignees, 0);
             Type assignee_type = *statement_get_assignee_type(assignees_list_get(&assignees, 0));
             if (assignee->is_variable_declaration) {
-                if (assignee->variable->is_ref) {
-                    Type ref_type = type_get_reference(&assignee_type);
-                    assignee_type = ref_type;
-                } else {
-                    // do nothing
+                Variable* variable = assignee->variable;
+                Type_Base* assignee_type_base = assignee_type.base;
+                Type_Type assignee_type_base_type = assignee_type_base->type;
+                if (assignee_type_base_type == type_interface) {
                 }
             } else {
                 Type deref_type = type_deref(&assignee_type);
                 assignee_type = deref_type;
             }
+
+            Type_Base* assignee_type_base = assignee_type.base;
+            Type_Type assignee_type_base_type = assignee_type_base->type;
+            Type_Base* value_type_base = value.type.base;
+            Type_Type value_type_base_type = value_type_base->type;
+            if (assignee_type_base_type == type_interface && value_type_base_type == type_interface && assignee_type.interface_instance_number == INTERFACE_INSTANCE_NUMBER_UNSPECIFIED) {
+                assignee_type.interface_instance_number = value.type.interface_instance_number;
+                Type* assignee_type_ref = statement_get_assignee_type(assignee);
+                *assignee_type_ref = assignee_type;
+            }
+            if (assignee_type_base_type == type_interface && value_type_base_type == type_interface && assignee_type.interface_instance_number >= INTERFACE_INSTANCE_NUMBER_VARIABLE_WAITING_TO_BE_OVERRIDDEN_OFFSET) {
+                u32 og_instance_number = assignee_type.interface_instance_number - INTERFACE_INSTANCE_NUMBER_VARIABLE_WAITING_TO_BE_OVERRIDDEN_OFFSET;
+                Type_Substitution substitution = function_find_constant_substitution(function, assignee_type.interface_instance_number);
+                assignee_type.interface_instance_number = og_instance_number;
+                Type* assignee_type_ref = statement_get_assignee_type(assignee);
+                *assignee_type_ref = assignee_type;
+
+                Type_Substitution existing_substitution = function_find_constant_substitution(function, og_instance_number);
+                if (!type_is_invalid(&existing_substitution.new_type)) {
+                }
+
+                value.type.interface_instance_number = og_instance_number;
+                function_add_constant_substitution_with_interface_instance_number(function, &substitution, og_instance_number);
+            }
+
             Expression value_expression = expression_implicitly_cast(&value, &assignee_type);
             if (value_expression.expr_type == et_invalid) {
                 Statement err = {0};
@@ -161,7 +203,7 @@ Statement statement_create_return(Ast* ast, Scope* scope, Function* function) {
     massert(ast->type == ast_return, "ast is not ast_return");
     Ast_Return* return_ast = &ast->return_;
     Ast* return_value_ast = return_ast->return_value;
-    Expression return_value = expression_create(return_value_ast, scope);
+    Expression return_value = expression_create(return_value_ast, scope, function);
     if (return_value.expr_type == et_invalid) {
         Statement err = {0};
         return err;
@@ -200,7 +242,7 @@ Statement statement_create_scope(Ast* ast, Scope* scope, Function* function) {
 }
 
 Statement statement_create_expression(Ast* ast, Scope* scope, Function* function) {
-    Expression expression = expression_create(ast, scope);
+    Expression expression = expression_create(ast, scope, function);
     if (expression.expr_type == et_invalid) {
         Statement err = {0};
         return err;
@@ -270,7 +312,10 @@ bool statement_compile_assignment(Statement* statement, Function* func, Scope* s
         Assignee* assignee = assignees_list_get(&statement->assignment.assignees, 0);
         if (assignee->is_variable_declaration) {
             Variable* variable = assignee->variable;
-            if (variable->is_ref) {
+            Type* variable_type = &variable->type;
+            Type real_variable_type = type_get_real_type(variable_type, substitutions);
+            Type_Type variable_type_type = type_get_type(&real_variable_type);
+            if (variable_type_type == type_ref) {
                 Variable_LLVM_Value v = {0};
                 v.variable = variable;
                 v.value = value;
@@ -298,7 +343,10 @@ bool statement_compile_assignment(Statement* statement, Function* func, Scope* s
 
             if (assignee->is_variable_declaration) {
                 Variable* variable = assignee->variable;
-                if (variable->is_ref) {
+                Type* variable_type = &variable->type;
+                Type real_variable_type = type_get_real_type(variable_type, substitutions);
+                Type_Type variable_type_type = type_get_type(&real_variable_type);
+                if (variable_type_type == type_ref) {
                     Variable_LLVM_Value v = {0};
                     v.variable = variable;
                     v.value = multi_value[i];
