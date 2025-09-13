@@ -68,13 +68,9 @@ bool ast_parse_as_assignment(Token** tokens) {
 
 bool ast_parseable_as_type(Token** tokens) {
     Token* token = *tokens;
+    if (token->type == tt_hash) token++;
     if (token->type != tt_identifier) return false;
     token++;
-    if (token->type == tt_dollar) {
-        token++;
-        if (token->type != tt_number) return false;
-        token++;
-    }
 
     // TODO: type modifiers like ptr
     while (true) {
@@ -95,47 +91,31 @@ Ast ast_type_parse(Token** tokens) {
     type.type = ast_type;
     type.token = token;
     type.num_tokens = token - type.token;
+
+    if (token->type == tt_hash) {
+        token++;
+        type.type_info.is_compile_time_type = true;
+    } else {
+        type.type_info.is_compile_time_type = false;
+    }
+
     if (token->type != tt_identifier) {
         log_error_token(token, "Expected type name");
         Ast err = {0};
         return err;
     }
     char* type_name = token_get_string(token);
-    type.type_info.name = type_name;
-    token++;
-
-    if (token->type == tt_dollar) {
-        token++;
-        if (token->type != tt_number) {
-            log_error_token(token, "Expected number for interface instance");
-            Ast err = {0};
-            return err;
-        }
-        char* number = token_get_string(token);
-        token++;
-        bool is_float = is_number_float(number);
-        if (is_float) {
-            log_error_token(token, "Expected number for interface instance to not be a float");
-            Ast err = {0};
-            return err;
-        }
-        bool error;
-        u64 interface_instance_number = get_string_uint(number, &error);
-        if (interface_instance_number > UINT32_MAX) {
-            log_error_token(token, "Interface instance number is too large. Max is UINT32_MAX");
-            Ast err = {0};
-            return err;
-        }
-
-        if (error) {
-            log_error_token(token, "Error with number for interface instance");
-            Ast err = {0};
-            return err;
-        }
-        type.type_info.interface_instace_number = interface_instance_number;
+    if (type.type_info.is_compile_time_type) {
+        u64 len = strlen(type_name) + 1;
+        char* name = alloc(len + 1);
+        name[0] = '#';
+        memcpy(name + 1, type_name, len - 1);
+        name[len] = '\0';
+        type.type_info.name = name;
     } else {
-        type.type_info.interface_instace_number = INTERFACE_INSTANCE_NUMBER_UNSPECIFIED;
+        type.type_info.name = type_name;
     }
+    token++;
 
     Type_Modifier_List modifiers = type_modifier_list_create(2);
     while (true) {
@@ -159,53 +139,6 @@ Ast ast_type_parse(Token** tokens) {
     type.num_tokens = token - type.token;
     *tokens = token;
     return type;
-}
-
-Ast ast_interface_parse(Token** tokens) {
-    Token* token = *tokens;
-    Ast ast = {0};
-    ast.type = ast_interface;
-    ast.token = token;
-    massert(token->type == tt_interface, "token type is not tt_interface");
-    token++;
-    if (token->type != tt_identifier) {
-        log_error_token(token, "Expected interface name");
-        Ast err = {0};
-        return err;
-    }
-    char* interface_name = token_get_string(token);
-    token++;
-
-    if (token->type != tt_open_brace) {
-        log_error_token(token, "Expected open brace after interface name");
-        Ast err = {0};
-        return err;
-    }
-    token++;
-
-    Ast_List functions = ast_list_create(2);
-    while (true) {
-        if (token->type == tt_close_brace) {
-            break;
-        }
-        Ast function = ast_function_declaration_parse(&token);
-        if (function.type == ast_invalid) return function;
-        if (function.function_declaration.body != NULL) {
-            log_error_token(token, "Functions in interfaces can't have a body");
-            Ast err = {0};
-            return err;
-        }
-        ast_list_add(&functions, &function);
-        while (token->type == tt_end_statement) token++;
-    }
-    massert(token->type == tt_close_brace, "token type is not tt_close_brace");
-    token++;
-
-    ast.interface.name = interface_name;
-    ast.interface.functions = functions;
-    ast.num_tokens = token - ast.token;
-    *tokens = token;
-    return ast;
 }
 
 Ast ast_variable_declaration_parse(Token** tokens) {
@@ -264,7 +197,6 @@ Ast ast_function_declaration_parse(Token** tokens) {
     Ast_List parameters = ast_list_create(2);
     if (token->type != tt_close_paren) {
         while (true) {
-            TokenType_ delimiters[] = {tt_comma, tt_close_paren};
             Ast variable_declaration = ast_variable_declaration_parse(&token);
             if (variable_declaration.type == ast_invalid) return variable_declaration;
             ast_list_add(&parameters, &variable_declaration);
@@ -435,9 +367,24 @@ Ast ast_general_identifier_parse(Token** tokens) {
     }
 }
 
+Ast ast_hash_parse(Token** tokens) {
+    Token* token = *tokens;
+    if (ast_parse_as_function_declaration(&token)) {
+        return ast_function_declaration_parse(tokens);
+    }
+    if (ast_parse_as_assignment(&token)) {
+        return ast_assignment_parse(tokens);
+    } else {
+        TokenType_ delimiters[] = {tt_end_statement};
+        return ast_expresssion_parse(tokens, delimiters, arr_length(delimiters));
+    }
+}
+
 Ast ast_general_parse(Token** tokens) {
     Token* token = *tokens;
     switch (token->type) {
+        case tt_hash:
+            return ast_hash_parse(tokens);
         case tt_identifier:
             return ast_general_identifier_parse(tokens);
         case tt_return:
@@ -454,9 +401,6 @@ Ast ast_general_parse(Token** tokens) {
         case tt_end_of_file:
         case tt_end_statement:
             return ast_end_statement_parse(tokens);
-        case tt_interface: {
-            return ast_interface_parse(tokens);
-        }
         case tt_ref:
         case tt_close_brace:
         case tt_close_paren:
@@ -643,7 +587,6 @@ Ast ast_value_parse(Token** tokens) {
             return ast_string_parse(tokens);
         case tt_open_paren:
             return ast_parenthesized_expression_parse(tokens);
-        case tt_interface:
         case tt_end_of_file:
         case tt_end_statement:
         case tt_dollar:
@@ -652,6 +595,7 @@ Ast ast_value_parse(Token** tokens) {
         case tt_ref:
         case tt_comma:
         case tt_equal:
+        case tt_hash:
         case tt_close_bracket:
         case tt_open_bracket:
         case tt_open_brace:

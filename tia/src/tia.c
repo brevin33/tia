@@ -41,7 +41,6 @@ char* compile_tia_project(Folder* folder) {
     char* triple = LLVMGetDefaultTargetTriple();
 
     context.llvm_info.llvm_context = LLVMContextCreate();
-    context.llvm_info.current_block = NULL;
     context.llvm_info.module = LLVMModuleCreateWithName(folder->name);
     context.llvm_info.builder = LLVMCreateBuilder();
 
@@ -61,13 +60,19 @@ char* compile_tia_project(Folder* folder) {
     // compile functions that need compiled
     for (u64 i = 0; i < context.functions.count; i++) {
         Function* function = function_pointer_list_get_function(&context.functions, i);
-        // allways compile main
-        if (strcmp(function->name, "main") == 0) {
-            Type_Substitution_List substitutions = type_substitution_list_create(0);
-            function_compile_llvm(function, &substitutions);
+        for (u64 j = 0; j < function->instances.count; j++) {
+            Function_Instance* function_instance = &function->instances.data[j];
+            function_llvm_prototype_instance(function_instance);
         }
+    }
 
-        // other things that we might compile
+    // compile functions that need compiled
+    for (u64 i = 0; i < context.functions.count; i++) {
+        Function* function = function_pointer_list_get_function(&context.functions, i);
+        for (u64 j = 0; j < function->instances.count; j++) {
+            Function_Instance* function_instance = &function->instances.data[j];
+            function_llvm_implement_instance(function_instance);
+        }
     }
 
     char* ir = LLVMPrintModuleToString(context.llvm_info.module);

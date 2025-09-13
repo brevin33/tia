@@ -1,8 +1,4 @@
-#include "tia/type.h"
-#include <llvm-c/Core.h>
 #include "tia.h"
-#include "tia/function.h"
-#include "tia/lists.h"
 
 void init_types() {
     // need to kickstart with invalid type so cant call type_base_new with it
@@ -21,7 +17,7 @@ void init_types() {
 
     type_base_new(type_number_literal, "$Number_Literal$", NULL);
     type_base_new(type_void, "void", NULL);
-    type_base_new(type_interface, "any", NULL);
+    type_base_new(type_template, "$Template$", NULL);
 }
 
 Type_Base* type_base_new(Type_Type type, const char* name, Ast* ast) {
@@ -201,12 +197,17 @@ Type_Base* type_find_base_type(const char* name) {
 //     return type;
 // }
 
-Type type_find_ast(Ast* ast, bool log_error, u64* ref_interface_instance_number_count_down_from) {
+Type type_find_ast(Ast* ast, Template_To_Type* template_to_type, bool log_error) {
     massert(ast->type == ast_type, "ast is not ast_type");
-    char* name = ast->type_info.name;
-    Type_Base* type_base = type_find_base_type_ast(ast);
+    Type_Base* type_base;
+    if (ast->type_info.is_compile_time_type) {
+        type_base = type_get_template_type_base();
+    } else {
+        type_base = type_find_base_type_ast(ast);
+    }
     if (type_base->type == type_invalid) {
         if (log_error) {
+            char* name = ast->type_info.name;
             log_error_ast(ast, "Type %s not found", name);
         }
     }
@@ -215,31 +216,9 @@ Type type_find_ast(Ast* ast, bool log_error, u64* ref_interface_instance_number_
     type.modifiers = ast->type_info.modifiers;
     type.base = type_base;
 
-    Type_Type base_type_type = type_base->type;
-    type.interface_instance_number = ast->type_info.interface_instace_number;
-    if (base_type_type != type_interface && type.interface_instance_number != INTERFACE_INSTANCE_NUMBER_UNSPECIFIED) {
-        log_error_ast(ast, "Type %s is not an interface so it can't have an interface instance number", name);
-        return type_get_invalid_type();
+    if (template_to_type != NULL) {
+        return type_get_mapped_type(template_to_type, &type);
     }
-
-    if (base_type_type == type_interface) {
-        u64 interface_instance_number = type.interface_instance_number;
-        if (interface_instance_number == INTERFACE_INSTANCE_NUMBER_UNSPECIFIED) {
-            type.interface_instance_number = *ref_interface_instance_number_count_down_from;
-            *ref_interface_instance_number_count_down_from = *ref_interface_instance_number_count_down_from - 1;
-        }
-    }
-
-    Type_Type type_type = type_get_type(&type);
-    if (type_type == type_ref) {
-        // interface can't have references
-        Type_Type base_type_type = type.base->type;
-        if (base_type_type == type_interface) {
-            log_error_ast(ast, "can't have reference to a interface", name);
-            return type_get_invalid_type();
-        }
-    }
-
     return type;
 }
 
@@ -260,6 +239,18 @@ Type type_get_function_type(Type_List* parameters, Type return_type) {
     Type_Base* type_base = type_get_function_type_base(parameters, return_type);
     Type type = {0};
     type.base = type_base;
+    return type;
+}
+
+Type_Base* type_get_template_type_base() {
+    return type_find_base_type("$Template$");
+}
+
+Type type_get_template_type(Ast* ast) {
+    Type_Base* type_base = type_get_template_type_base();
+    Type type = {0};
+    type.base = type_base;
+    type.ast = ast;
     return type;
 }
 
@@ -294,54 +285,23 @@ Type type_get_multi_value_type(Type_List* types) {
     return type;
 }
 
-Type_Base* type_prototype_interface(Ast* ast) {
-    massert(ast->type == ast_interface, "ast is not ast_interface");
-    Ast_Interface* interface = &ast->interface;
-    char* interface_name = interface->name;
-    Type_Base* type_base = type_base_new(type_interface, interface_name, ast);
-    return type_base;
-}
-
-void type_implement_interface(Type_Base* type_base) {
-    Ast* ast = type_base->ast;
-    massert(ast != NULL, "type_base->ast is NULL");
-    u64 interface_instance_number_count_down_from = UINT64_MAX;
-
-    Ast_Interface* interface = &ast->interface;
-    for (u64 i = 0; i < interface->functions.count; i++) {
-        Ast* function = ast_list_get(&interface->functions, i);
-        massert(function->type == ast_function_declaration, "function->type is not ast_function_declaration");
-        Ast_Function_Declaration* function_declaration = &function->function_declaration;
-        Type return_type = type_find_ast(function_declaration->return_type, true, NULL);
-
-        Type_List parameters = type_list_create(function_declaration->parameters.count);
-        if (return_type.base->type == type_invalid) {
-            type_base->type = type_invalid;
-            return;
-        }
-        for (u64 j = 0; j < function_declaration->parameters.count; j++) {
-            Ast* parameter = ast_list_get(&function_declaration->parameters, j);
-            massert(parameter->type == ast_variable_declaration, "parameter->type is not ast_variable_declaration");
-            Ast_Variable_Declaration* parameter_declaration = &parameter->variable_declaration;
-            Type parameter_type = type_find_ast(parameter_declaration->type, true, &interface_instance_number_count_down_from);
-            if (parameter_type.base->type == type_invalid) {
-                type_base->type = type_invalid;
-                return;
-            }
-            type_list_add(&parameters, &parameter_type);
-        }
-        Type function_type = type_get_function_type(&parameters, return_type);
-        char* function_name = function_declaration->name;
-
-        Type_Interface_Function ifunction = {0};
-        ifunction.function_type = function_type;
-        ifunction.function_name = function_name;
-        type_interface_function_list_add(&type_base->interface.functions, &ifunction);
-    }
+const char* type_get_template_base_name(Type* type) {
+    massert(type->base->type == type_template, "type is not type_template");
+    Ast* ast = type->ast;
+    char* name = ast->type_info.name;
+    return name;
 }
 
 char* type_get_name(Type* type) {
-    u64 len = strlen(type->base->name);
+    const char* base_name = NULL;
+    Type_Type type_type = type->base->type;
+    if (type_type == type_template) {
+        base_name = type_get_template_base_name(type);
+    } else {
+        base_name = type->base->name;
+    }
+
+    u64 len = strlen(base_name);
     for (u64 i = 0; i < type->modifiers.count; i++) {
         switch (type->modifiers.data[i].type) {
             case type_modifier_ref:
@@ -352,8 +312,8 @@ char* type_get_name(Type* type) {
         }
     }
     char* name = alloc(len + 1);
-    memcpy(name, type->base->name, len);
-    u64 count = strlen(type->base->name);
+    memcpy(name, base_name, len);
+    u64 count = strlen(base_name);
     for (u64 i = 0; i < type->modifiers.count; i++) {
         switch (type->modifiers.data[i].type) {
             case type_modifier_ref: {
@@ -366,23 +326,6 @@ char* type_get_name(Type* type) {
         }
     }
     name[count] = '\0';
-
-    u64 name_len = strlen(name);
-    Type_Base* base = type->base;
-    if (base->type == type_interface) {
-        char* extra_type_info_name = alloc(name_len + 40);
-        if (type->interface_instance_number == INTERFACE_INSTANCE_NUMBER_UNSPECIFIED) {
-            sprintf(extra_type_info_name, "%s(instance:unspecified)", name);
-        } else if (type->interface_instance_number <= UINT32_MAX) {
-            sprintf(extra_type_info_name, "%s(instance:%llu)", name, type->interface_instance_number);
-        } else {
-            u64 interface_instance_number = type->interface_instance_number;
-            u64 inverse_interface_instance_number = UINT64_MAX - interface_instance_number;
-            sprintf(extra_type_info_name, "%s(compiler instance:%llu)", name, inverse_interface_instance_number);
-        }
-        return extra_type_info_name;
-    }
-
     return name;
 }
 
@@ -485,88 +428,91 @@ Type type_deref(Type* type) {  // pointer go to references
     }
 }
 
-Type type_get_real_type(Type* type, Type_Substitution_List* substitutions) {
+void type_add_mapping(Template_To_Type* template_to_type, const char* name, Type* type) {
+    Template_Map template_map = {0};
+    u64 len = strlen(name) + 1;
+    template_map.name = alloc(len + 1);
+    memcpy(template_map.name, name, len);
+    template_map.type = *type;
+    template_map_list_add(&template_to_type->templates, &template_map);
+}
+
+Type type_get_mapped_type(Template_To_Type* template_to_type, Type* type) {
     Type_Type type_type = type_get_type(type);
     switch (type_type) {
-        case type_interface:
-        case type_int:
-        case type_float:
-        case type_uint: {
-            for (u64 i = 0; i < substitutions->count; i++) {
-                Type_Substitution* substitution = type_substitution_list_get(substitutions, i);
-                Type_Base* base_type = type->base;
-                Type_Base* substituted_type = substitution->substituted_type;
-                if (base_type == substituted_type) {
-                    u64 interface_instance_number = substitution->interface_instance_number;
-                    Type_Type base_type_type = base_type->type;
-                    massert(base_type_type == type_interface, "base_type_type != type_interface");
-                    u64 base_type_interface_instance_number = type->interface_instance_number;
-                    massert(base_type_interface_instance_number != INTERFACE_INSTANCE_NUMBER_UNSPECIFIED, "base_type_interface_instance_number == INTERFACE_INSTANCE_NUMBER_UNSPECIFIED");  //should have gotten specified at some point
-                    if (interface_instance_number == base_type_interface_instance_number) {
-                        Type new_type;
-                        new_type.modifiers = type_modifier_list_create(8);
-                        massert(type->modifiers.count == 0, "type->modifiers.count != 0");
-                        for (u64 j = 0; j < substitution->new_type.modifiers.count; j++) {
-                            Type_Modifier* modifier = type_modifier_list_get(&substitution->new_type.modifiers, j);
-                            type_modifier_list_add(&new_type.modifiers, modifier);
-                        }
-                        new_type.ast = type->ast;
-                        new_type.base = substitution->new_type.base;
-                        massert(substitution->new_type.base->type != type_interface, "substitution->new_type.base->type == type_interface");  //maybe do somthing to make this work
-                        new_type.interface_instance_number = INTERFACE_INSTANCE_NUMBER_UNSPECIFIED;
-                        return new_type;
-                    }
-                }
+        case type_template: {
+            const char* name = type_get_template_base_name(type);
+            Type* to_map_to = type_get_mapping(template_to_type, name);
+            if (to_map_to == NULL) {
+                log_error_ast(type->ast, "Template not declared in function declaration: %s", name);
+                return type_get_invalid_type();
             }
-            return *type;
+            return *to_map_to;
         }
         case type_ref: {
             Type deref_type = type_deref(type);
-            deref_type = type_get_real_type(&deref_type, substitutions);
-            Type_Type deref_type_type = type_get_type(&deref_type);
-            // i think this should be fine
-            if (deref_type_type == type_ref) {
-                return deref_type;
-            } else {
-                return type_get_reference(&deref_type);
-            }
-        }
-        case type_function: {
-            Type_List new_parameters = type_list_create(type->base->function.parameters.count);
-            for (u64 i = 0; i < type->base->function.parameters.count; i++) {
-                Type* parameter = type_list_get(&type->base->function.parameters, i);
-                Type new_parameter = type_get_real_type(parameter, substitutions);
-                type_list_add(&new_parameters, &new_parameter);
-            }
-            Type new_return_type = type_get_real_type(&type->base->function.return_type, substitutions);
-            Type_Base* new_Function_base_type = type_get_function_type_base(&new_parameters, new_return_type);
-            Type new_type;
-            new_type.ast = type->ast;
-            new_type.base = new_Function_base_type;
-            new_type.modifiers = type_modifier_list_create(0);
-            return new_type;
+            Type deref_mapped_type = type_get_mapped_type(template_to_type, &deref_type);
+            return type_get_reference(&deref_mapped_type);
         }
         case type_multi_value: {
-            Type_List new_types = type_list_create(type->base->multi_value.types.count);
-            for (u64 i = 0; i < type->base->multi_value.types.count; i++) {
-                Type* type = type_list_get(&type->base->multi_value.types, i);
-                Type new_type = type_get_real_type(type, substitutions);
-                type_list_add(&new_types, &new_type);
+            Type_List* types = &type->base->multi_value.types;
+            Type_List mapped_types = type_list_create(types->count);
+            for (u64 i = 0; i < types->count; i++) {
+                Type* type = type_list_get(types, i);
+                Type mapped_type = type_get_mapped_type(template_to_type, type);
+                type_list_add(&mapped_types, &mapped_type);
             }
-            Type_Base* new_MultiValue_base_type = type_get_multi_value_type_base(&new_types);
-            Type new_type;
-            new_type.ast = type->ast;
-            new_type.base = new_MultiValue_base_type;
-            new_type.modifiers = type_modifier_list_create(0);
-            return new_type;
+            Type multi_value_type = type_get_multi_value_type(&mapped_types);
+            return multi_value_type;
         }
-        case type_number_literal:
+        case type_function: {
+            Type_List* parameters = &type->base->function.parameters;
+            Type_List mapped_parameters = type_list_create(parameters->count);
+            for (u64 i = 0; i < parameters->count; i++) {
+                Type* parameter = type_list_get(parameters, i);
+                Type mapped_parameter = type_get_mapped_type(template_to_type, parameter);
+                type_list_add(&mapped_parameters, &mapped_parameter);
+            }
+            Type return_type = type_get_mapped_type(template_to_type, &type->base->function.return_type);
+            return type_get_function_type(&mapped_parameters, return_type);
+        }
         case type_invalid:
-        case type_void: {
-            // can't substitute these type
+        case type_int:
+        case type_float:
+        case type_uint:
+        case type_void:
+        case type_number_literal:
             return *type;
+    }
+}
+
+Type* type_get_mapping(Template_To_Type* template_to_type, const char* name) {
+    for (u64 i = 0; i < template_to_type->templates.count; i++) {
+        Template_Map* template_map = template_map_list_get(&template_to_type->templates, i);
+        if (strcmp(template_map->name, name) == 0) {
+            return &template_map->type;
         }
     }
+    return NULL;
+}
+
+bool type_mapping_equal(Template_To_Type* template_to_type, Template_To_Type* other_template_to_type) {
+    if (template_to_type->templates.count != other_template_to_type->templates.count) return false;
+    for (u64 i = 0; i < template_to_type->templates.count; i++) {
+        Template_Map* template_map = template_map_list_get(&template_to_type->templates, i);
+        char* name1 = template_map->name;
+        bool found = false;
+        for (u64 j = 0; j < other_template_to_type->templates.count; j++) {
+            Template_Map* other_template_map = template_map_list_get(&other_template_to_type->templates, j);
+            char* name2 = other_template_map->name;
+            if (strcmp(name1, name2) == 0 && type_is_equal(&template_map->type, &other_template_map->type)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) return false;
+    }
+    return true;
 }
 
 Type type_get_reference(Type* type) {
@@ -591,106 +537,9 @@ Type type_underlying(Type* type) {  // pointer go to underlying value
     }
 }
 
-bool type_fullfills_interface(Type* type, Type* interface) {
+bool type_is_template(Type* type) {
     Type_Type type_type = type_get_type(type);
-    if (type_type == type_invalid) return false;
-    if (type_type == type_number_literal) return false;
-    Type_Type interface_type = type_get_type(interface);
-    massert(interface_type == type_interface, "type is not type_interface");
-
-    char* interface_name = type_get_name(interface);
-    if (strcmp(interface_name, "any") == 0) {
-        return true;
-    }
-
-    Type_Interface* i = &interface->base->interface;
-    Type_Interface_Function_List* functions = &i->functions;
-    for (u64 i = 0; i < functions->count; i++) {
-        Type_Interface_Function* ifunction = type_interface_function_list_get(functions, i);
-        Type ireturn_type = ifunction->function_type.base->function.return_type;
-
-        Type_List replaced_parameters = type_list_create(ifunction->function_type.base->function.parameters.count);
-        for (u64 j = 0; j < ifunction->function_type.base->function.parameters.count; j++) {
-            Type* parameter = type_list_get(&ifunction->function_type.base->function.parameters, j);
-            if (type_is_equal(parameter, interface)) {
-                type_list_add(&replaced_parameters, type);
-            } else {
-                type_list_add(&replaced_parameters, parameter);
-            }
-        }
-
-        Function_Find_Result function_find_result = function_find(&replaced_parameters, ifunction->function_name, NULL, false, false);
-        if (function_find_result.function == NULL) {
-            return false;
-        }
-        Function* function = function_find_result.function;
-        Type* return_type = function_get_return_type(function);
-        Type real_return_type = type_get_real_type(return_type, &function_find_result.substitutions);
-        bool can_implicit_cast = expression_can_implicitly_cast(&ireturn_type, &real_return_type);
-        if (can_implicit_cast) continue;
-        // TODO: interface check
-        return false;
-    }
-    return true;
-}
-
-Type type_interface_is_there_a_interface_function(Type_List* arguments, char* function_name) {
-    for (u64 i = 0; i < arguments->count; i++) {
-        Type argument_type = *type_list_get(arguments, i);
-        Type_Type argument_type_type = type_get_type(&argument_type);
-        if (argument_type_type == type_ref) {
-            argument_type = type_deref(&argument_type);
-            argument_type_type = type_get_type(&argument_type);
-        }
-        if (argument_type_type == type_interface) {
-            Type_Interface* interface = &argument_type.base->interface;
-            for (u64 j = 0; j < interface->functions.count; j++) {
-                Type_Interface_Function* function = type_interface_function_list_get(&interface->functions, j);
-                if (strcmp(function->function_name, function_name) != 0) continue;
-
-                Type function_type = function->function_type;
-                bool fits = true;
-                Type_Substitution_List substitutions = type_substitution_list_create(0);
-                for (u64 k = 0; k < function_type.base->function.parameters.count; k++) {
-                    Type* parameter_type = type_list_get(&function_type.base->function.parameters, k);
-                    Type* argument_type = type_list_get(arguments, k);
-                    if (type_is_equal(argument_type, parameter_type)) continue;
-
-                    bool can_implicit_cast = expression_can_implicitly_cast(argument_type, parameter_type);
-                    if (can_implicit_cast) continue;
-
-                    Type_Type parameter_type_type = type_get_type(parameter_type);
-                    if (parameter_type_type == type_interface) {
-                        bool fullfills = type_fullfills_interface(argument_type, parameter_type);
-                        Type_Substitution substitution;
-                        substitution.substituted_type = parameter_type->base;
-                        substitution.new_type = *argument_type;
-
-                        for (u64 k = 0; k < substitutions.count; k++) {
-                            Type_Substitution* substitution_k = type_substitution_list_get(&substitutions, k);
-                            if (substitution_k->substituted_type == substitution.substituted_type) {
-                                if (substitution_k->interface_instance_number == substitution.interface_instance_number) {
-                                    if (!type_is_equal(&substitution_k->new_type, &substitution.new_type)) {
-                                        fits = false;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-
-                        if (fullfills) {
-                            type_substitution_list_add(&substitutions, &substitution);
-                            continue;
-                        }
-                    }
-
-                    fits = false;
-                }
-                if (fits) return function_type.base->function.return_type;
-            }
-        }
-    }
-    return type_get_invalid_type();
+    return type_type == type_template;
 }
 
 bool type_is_reference_of(Type* ref, Type* of) {
@@ -700,35 +549,22 @@ bool type_is_reference_of(Type* ref, Type* of) {
     return type_is_equal(&ref_deref, of);
 }
 
-bool type_substitutions_is_equal(Type_Substitution_List* substitutions_a, Type_Substitution_List* substitutions_b) {
-    if (substitutions_a->count != substitutions_b->count) return false;
-    for (u64 i = 0; i < substitutions_a->count; i++) {
-        Type_Substitution* substitution_a = type_substitution_list_get(substitutions_a, i);
-        bool found = false;
-        for (u64 j = 0; j < substitutions_b->count; j++) {
-            Type_Substitution* substitution_b = type_substitution_list_get(substitutions_b, j);
-            if (substitution_a->interface_instance_number == substitution_b->interface_instance_number) {
-                if (substitution_a->substituted_type == substitution_b->substituted_type) {
-                    if (type_is_equal(&substitution_a->new_type, &substitution_b->new_type)) {
-                        found = true;
-                        break;
-                    }
-                }
-            }
-        }
-        if (!found) return false;
-    }
-    return true;
-}
-
 bool type_is_equal(Type* type_a, Type* type_b) {
     if (type_a->base != type_b->base) return false;
-    if (type_a->interface_instance_number != type_b->interface_instance_number) return false;
     if (type_a->modifiers.count != type_b->modifiers.count) return false;
     for (u64 i = 0; i < type_a->modifiers.count; i++) {
         Type_Modifier* modifier_a = type_modifier_list_get(&type_a->modifiers, i);
         Type_Modifier* modifier_b = type_modifier_list_get(&type_b->modifiers, i);
         if (modifier_a->type != modifier_b->type) return false;
+    }
+    Type_Type type_a_type = type_a->base->type;
+    Type_Type type_b_type = type_b->base->type;
+    if (type_a_type == type_template && type_b_type == type_template) {
+        const char* name_a = type_get_template_base_name(type_a);
+        const char* name_b = type_get_template_base_name(type_b);
+        if (strcmp(name_a, name_b) != 0) {
+            return false;
+        }
     }
     return true;
 }
@@ -741,18 +577,13 @@ bool type_is_invalid(Type* type) {
     return type_base_is_invalid(type->base);
 }
 
-LLVMTypeRef type_get_llvm_type(Type* type, Type_Substitution_List* substitutions) {
-    Type real_type = type_get_real_type(type, substitutions);
-    return type_get_llvm_type_no_substitution(&real_type);
-}
-
-LLVMTypeRef type_get_llvm_type_no_substitution(Type* type) {
+LLVMTypeRef type_get_llvm_type(Type* type) {
     if (type->modifiers.count > 0) {
         Type_Modifier* last_modifier = type_modifier_list_get(&type->modifiers, type->modifiers.count - 1);
         switch (last_modifier->type) {
             case type_modifier_ref: {
                 Type deref_type = type_deref(type);
-                LLVMTypeRef deref_llvm_type = type_get_llvm_type_no_substitution(&deref_type);
+                LLVMTypeRef deref_llvm_type = type_get_llvm_type(&deref_type);
                 return LLVMPointerType(deref_llvm_type, 0);
             }
             case type_modifier_invalid:
@@ -760,10 +591,10 @@ LLVMTypeRef type_get_llvm_type_no_substitution(Type* type) {
                 return NULL;
         }
     }
-    return type_get_base_llvm_type_no_substitution(type->base);
+    return type_get_base_llvm_type(type->base);
 }
 
-LLVMTypeRef type_get_base_llvm_type_no_substitution(Type_Base* type_base) {
+LLVMTypeRef type_get_base_llvm_type(Type_Base* type_base) {
     Type_Type type_type = type_base->type;
     switch (type_type) {
         case type_int:
@@ -788,7 +619,7 @@ LLVMTypeRef type_get_base_llvm_type_no_substitution(Type_Base* type_base) {
             return LLVMVoidType();
             break;
         case type_function: {
-            LLVMTypeRef return_llvm_type = type_get_llvm_type_no_substitution(&type_base->function.return_type);
+            LLVMTypeRef return_llvm_type = type_get_llvm_type(&type_base->function.return_type);
             LLVMTypeRef parameter_type_buffer[512];
             if (type_base->function.parameters.count > 512) {
                 red_printf("too many parameters\n");
@@ -796,16 +627,16 @@ LLVMTypeRef type_get_base_llvm_type_no_substitution(Type_Base* type_base) {
             }
             for (u64 i = 0; i < type_base->function.parameters.count; i++) {
                 Type* parameter_type = type_list_get(&type_base->function.parameters, i);
-                parameter_type_buffer[i] = type_get_llvm_type_no_substitution(parameter_type);
+                parameter_type_buffer[i] = type_get_llvm_type(parameter_type);
             }
             return LLVMFunctionType(return_llvm_type, parameter_type_buffer, type_base->function.parameters.count, false);
             break;
         }
-        case type_interface:
         case type_invalid:
         case type_ref:
         case type_number_literal:
         case type_multi_value:
+        case type_template:
             return NULL;
             break;
     }

@@ -7,7 +7,7 @@
 #include "tia/lists.h"
 #include "tia/type.h"
 
-Expression _expression_create(Ast* ast, Scope* scope, Function* in_function) {
+Expression expression_create(Ast* ast, Scope* scope, Function_Instance* in_function) {
     switch (ast->type) {
         case ast_word:
             return expression_create_word(ast, scope, in_function);
@@ -19,7 +19,6 @@ Expression _expression_create(Ast* ast, Scope* scope, Function* in_function) {
             return expression_create_biop(ast, scope, in_function);
         case ast_function_call:
             return expression_create_function_call(ast, scope, in_function);
-        case ast_interface:
         case ast_variable_declaration:
         case ast_return:
         case ast_end_statement:
@@ -34,17 +33,7 @@ Expression _expression_create(Ast* ast, Scope* scope, Function* in_function) {
     }
 }
 
-Expression expression_create(Ast* ast, Scope* scope, Function* in_function) {
-    Expression expression = _expression_create(ast, scope, in_function);
-    Type* expression_type = &expression.type;
-    Type_Base* expression_type_base = expression_type->base;
-    Type_Type base_type_type = expression_type_base->type;
-    if (base_type_type == type_interface) {
-    }
-    return expression;
-}
-
-Expression expression_create_function_call(Ast* ast, Scope* scope, Function* in_function) {
+Expression expression_create_function_call(Ast* ast, Scope* scope, Function_Instance* in_function) {
     massert(ast->type == ast_function_call, "ast is not ast_function_call");
     Expression expression = {0};
     expression.expr_type = et_function_call;
@@ -61,51 +50,25 @@ Expression expression_create_function_call(Ast* ast, Scope* scope, Function* in_
         type_list_add(&parameter_types, argument_type);
     }
 
-    Function_Find_Result function = function_find(&parameter_types, function_name, ast, true, true);
-    if (function.function == NULL && type_is_invalid(&function.there_is_an_interface_function_return_type)) {
+    Function_Instance* function_instance = function_find(&parameter_types, function_name, ast, true);
+    if (function_instance == NULL) {
         Expression err = {0};
         return err;
     }
-    if (!type_is_invalid(&function.there_is_an_interface_function_return_type)) {
-        expression.expr_type = et_interface_function_call;
-        expression.ast = ast;
-        expression.interface_function_call.function_name = function_name;
-        expression.interface_function_call.arguments = arguments;
-        expression.type = function.there_is_an_interface_function_return_type;
-        return expression;
-    }
-    Type* function_type = &function.function->type;
-    Type real_function_type = type_get_real_type(function_type, &function.substitutions);
-    for (u64 i = 0; i < arguments.count; i++) {
+    expression.function_call.function_instance = function_instance;
+    for (u64 i = 0; i < ast->function_call.arguments.count; i++) {
         Expression* argument = expression_list_get(&arguments, i);
-        Type_List* function_paramerters = &real_function_type.base->function.parameters;
-        Type* function_parameter = &function_paramerters->data[i];
-        Expression argument_cast = expression_implicitly_cast(argument, function_parameter);
-        if (argument_cast.expr_type == et_invalid) {
-            massert(false, "should never happen");
-            Expression err = {0};
-            return err;
-        }
+        Type* parameter_type = &function_instance->type.base->function.parameters.data[i];
+        Expression argument_cast = expression_implicitly_cast(argument, parameter_type);
+        massert(argument_cast.expr_type != et_invalid, "should never happen");
         *argument = argument_cast;
     }
-
-    expression.function_call.function = function;
     expression.function_call.arguments = arguments;
-    Type return_type = function_type->base->function.return_type;
-    Type_Base* return_type_base = return_type.base;
-    Type_Type return_type_base_type = return_type_base->type;
-    if (return_type_base_type == type_interface) {
-        Type_Substitution substitution = {0};
-        substitution.substituted_type = return_type_base;
-        substitution.new_type = real_function_type.base->function.return_type;
-        u64 interface_instance = function_add_constant_substitution(in_function, &substitution);
-        return_type.interface_instance_number = interface_instance;
-    }
-    expression.type = return_type;
+    expression.type = function_instance->type.base->function.return_type;
     return expression;
 }
 
-Expression expression_create_variable(Ast* ast, Scope* scope, Function* in_function) {
+Expression expression_create_variable(Ast* ast, Scope* scope, Function_Instance* in_function) {
     Expression expression = {0};
     expression.expr_type = et_variable;
     expression.ast = ast;
@@ -126,15 +89,15 @@ Expression expression_create_variable(Ast* ast, Scope* scope, Function* in_funct
     return expression;
 }
 
-Expression expression_create_biop(Ast* ast, Scope* scope, Function* in_function) {
+Expression expression_create_biop(Ast* ast, Scope* scope, Function_Instance* in_function) {
     massert(false, "not implemented");
 }
 
-Expression expression_create_word(Ast* ast, Scope* scope, Function* in_function) {
+Expression expression_create_word(Ast* ast, Scope* scope, Function_Instance* in_function) {
     return expression_create_variable(ast, scope, in_function);
 }
 
-Expression expression_create_multi_expression(Ast* ast, Scope* scope, Function* in_function) {
+Expression expression_create_multi_expression(Ast* ast, Scope* scope, Function_Instance* in_function) {
     Expression expression = {0};
     expression.expr_type = et_multi_expression;
     expression.ast = ast;
@@ -156,7 +119,7 @@ Expression expression_create_multi_expression(Ast* ast, Scope* scope, Function* 
     return expression;
 }
 
-Expression expression_create_number_literal(Ast* ast, Scope* scope, Function* in_function) {
+Expression expression_create_number_literal(Ast* ast, Scope* scope, Function_Instance* in_function) {
     Expression expression = {0};
     expression.expr_type = et_number_literal;
     expression.type = type_get_number_literal_type();
@@ -222,12 +185,6 @@ bool expression_can_implicitly_cast_without_deref(Type* expression, Type* type) 
         }
     }
 
-    // i don't think we want to do this
-    // if (type_type == type_interface) {
-    //     bool fullfills = type_fullfills_interface(expression, type);
-    //     if (fullfills) return true;
-    // }
-
     return false;
 }
 
@@ -269,23 +226,21 @@ Expression expression_implicitly_cast(Expression* expression, Type* type) {
     return err;
 }
 
-LLVMValueRef expression_compile(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
+LLVMValueRef expression_compile(Expression* expression, Function_Instance* func, Scope* scope) {
     switch (expression->expr_type) {
         case et_number_literal:
-            return expression_compile_number_literal(expression, func, scope, substitutions, var_to_llvm_val, function_value);
+            return expression_compile_number_literal(expression, func, scope);
         case et_variable:
-            return expression_compile_variable(expression, func, scope, substitutions, var_to_llvm_val, function_value);
+            return expression_compile_variable(expression, func, scope);
         case et_biop:
             massert(false, "not implemented");
             return NULL;
-        case et_interface_function_call:
-            return expression_compile_interface_function_call(expression, func, scope, substitutions, var_to_llvm_val, function_value);
         case et_multi_expression:
-            return expression_compile_multi_expression(expression, func, scope, substitutions, var_to_llvm_val, function_value);
+            return expression_compile_multi_expression(expression, func, scope);
         case et_cast:
-            return expression_compile_cast(expression, func, scope, substitutions, var_to_llvm_val, function_value);
+            return expression_compile_cast(expression, func, scope);
         case et_function_call:
-            return expression_compile_function_call(expression, func, scope, substitutions, var_to_llvm_val, function_value);
+            return expression_compile_function_call(expression, func, scope);
         case et_invalid:
             massert(false, "unexpected expression");
             return NULL;
@@ -293,115 +248,64 @@ LLVMValueRef expression_compile(Expression* expression, Function* func, Scope* s
 }
 
 // multi value is special and actually return a pointer to LLVMValueRef array so we need to cast it.
-LLVMValueRef expression_compile_multi_expression(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
+LLVMValueRef expression_compile_multi_expression(Expression* expression, Function_Instance* func, Scope* scope) {
     massert(expression->expr_type == et_multi_expression, "expression is not et_multi_expression");
     Expression_Multi_Expression* multi_expression = &expression->multi_expression;
     LLVMValueRef* mulit_value = alloc(sizeof(LLVMValueRef) * multi_expression->expressions.count);
     massert(multi_expression->expressions.count < 512, "too many expressions");
     for (u64 i = 0; i < multi_expression->expressions.count; i++) {
         Expression* expression = expression_list_get(&multi_expression->expressions, i);
-        mulit_value[i] = expression_compile(expression, func, scope, substitutions, var_to_llvm_val, function_value);
+        mulit_value[i] = expression_compile(expression, func, scope);
     }
     // multi value is special and actually return a pointer to LLVMValueRef array so we need to cast it.
     return (LLVMValueRef)mulit_value;
 }
 
-// magic function that makes this possible
-LLVMValueRef expression_compile_interface_function_call(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
-    massert(expression->expr_type == et_interface_function_call, "expression is not et_interface_function_call");
-    Expression_Interface_Function_Call* interface_function_call = &expression->interface_function_call;
-    char* function_name = interface_function_call->function_name;
-    Expression_List* arguments = &interface_function_call->arguments;
-    Type_List parameter_types = type_list_create(arguments->count);
-    for (u64 i = 0; i < arguments->count; i++) {
-        Expression* argument = expression_list_get(arguments, i);
-        Type* expression_type = &argument->type;
-        Type real_expression_type = type_get_real_type(expression_type, substitutions);
-        type_list_add(&parameter_types, &real_expression_type);
-    }
-
-    Function_Find_Result function = function_find(&parameter_types, function_name, NULL, true, true);
-    if (context.numberOfErrors > 0) {
-        massert(false, "should not have thrown an error");
-    }
-    massert(function.function != NULL, "function not found");
-
-    Function* interface_function = function.function;
-    Type_Substitution_List interface_function_substitutions = function.substitutions;
-
-    // compile arguments
-    LLVMValueRef_List argument_values = llvm_value_ref_list_create(8);
-    for (u64 i = 0; i < arguments->count; i++) {
-        Expression argument = *expression_list_get(arguments, i);
-        argument.type = type_get_real_type(&argument.type, substitutions);
-
-        // we need to make the case for calling the function
-        Type function_arg_type = interface_function->type.base->function.parameters.data[i];
-        Type real_function_arg_type = type_get_real_type(&function_arg_type, &interface_function_substitutions);
-        Expression implicit_cast = expression_implicitly_cast(&argument, &real_function_arg_type);
-
-        LLVMValueRef argument_value = expression_compile(&implicit_cast, func, scope, &interface_function_substitutions, var_to_llvm_val, function_value);
+LLVMValueRef expression_compile_function_call(Expression* expression, Function_Instance* func, Scope* scope) {
+    massert(expression->expr_type == et_function_call, "expression is not et_function_call");
+    Expression_Function_Call* function_call = &expression->function_call;
+    LLVMValueRef_List argument_values = llvm_value_ref_list_create(function_call->arguments.count);
+    for (u64 i = 0; i < function_call->arguments.count; i++) {
+        Expression* argument = expression_list_get(&function_call->arguments, i);
+        LLVMValueRef argument_value = expression_compile(argument, func, scope);
         llvm_value_ref_list_add(&argument_values, argument_value);
     }
 
-    // compile function
-    LLVMValueRef function_llvm_value = function_get_llvm_value(interface_function, &interface_function_substitutions);
-    Type* function_type = &interface_function->type;
-    LLVMTypeRef function_type_llvm = type_get_llvm_type(function_type, &expression->function_call.function.substitutions);
+    Function_Instance* to_call = function_call->function_instance;
+    LLVMValueRef function_value = to_call->function_value;
+    massert(function_value != NULL, "function_value is NULL");
+    LLVMTypeRef function_type = type_get_llvm_type(&to_call->type);
 
-    LLVMValueRef call = LLVMBuildCall2(context.llvm_info.builder, function_type_llvm, function_llvm_value, argument_values.data, argument_values.count, "funcCall");
-    return call;
+    LLVMValueRef result = LLVMBuildCall2(context.llvm_info.builder, function_type, function_value, argument_values.data, argument_values.count, "call");
+    return result;
 }
 
-LLVMValueRef expression_compile_function_call(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
-    massert(expression->expr_type == et_function_call, "expression is not et_function_call");
-    Function* function = expression->function_call.function.function;
-    Type* function_type = &function->type;
-    Type* return_type = &function_type->base->function.return_type;
-    Expression_List arguments = expression->function_call.arguments;
-
-    // compile arguments
-    LLVMValueRef args[arguments.count];
-    for (u64 i = 0; i < arguments.count; i++) {
-        Expression* argument = expression_list_get(&arguments, i);
-        args[i] = expression_compile(argument, func, scope, substitutions, var_to_llvm_val, function_value);
-    }
-
-    // TODO: fill in the new substitutions list
-    LLVMValueRef fun_val = function_get_llvm_value(function, &expression->function_call.function.substitutions);
-    LLVMTypeRef function_type_llvm = type_get_llvm_type(function_type, &expression->function_call.function.substitutions);
-    // LLVMValueRef i32_value = LLVMConstInt(LLVMInt32Type(), 0, false);
-    // expression->value = i32_value;
-    LLVMValueRef call = LLVMBuildCall2(context.llvm_info.builder, function_type_llvm, fun_val, args, arguments.count, "funcCall");
-    return call;
-}
-
-LLVMValueRef expression_compile_number_literal(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
+LLVMValueRef expression_compile_number_literal(Expression* expression, Function_Instance* func, Scope* scope) {
     // do nothing
     return NULL;
 }
 
-LLVMValueRef expression_compile_variable(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
-    return scope_get_variable_value(var_to_llvm_val, expression->variable.variable);
+LLVMValueRef expression_compile_variable(Expression* expression, Function_Instance* func, Scope* scope) {
+    Variable* variable = expression->variable.variable;
+    return variable->value;
 }
 
-LLVMValueRef expression_compile_cast(Expression* expression, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
+LLVMValueRef expression_compile_cast(Expression* expression, Function_Instance* func, Scope* scope) {
     Expression* from_expression = expression->cast.expression;
-    LLVMValueRef from_value = expression_compile(from_expression, func, scope, substitutions, var_to_llvm_val, function_value);
+    LLVMValueRef from_value = expression_compile(from_expression, func, scope);
 
-    Type to_type = type_get_real_type(&expression->type, substitutions);
+    Type to_type = expression->type;
     Type_Type to_type_type = type_get_type(&to_type);
-    LLVMTypeRef to_type_llvm = type_get_llvm_type(&to_type, substitutions);
-    Type from_type = type_get_real_type(&expression->cast.expression->type, substitutions);
+    LLVMTypeRef to_type_llvm = type_get_llvm_type(&to_type);
+    Type from_type = expression->cast.expression->type;
     Type_Type from_type_type = type_get_type(&from_type);
-    LLVMTypeRef from_type_llvm = type_get_llvm_type(&from_type, substitutions);
 
     if (type_is_equal(&from_type, &to_type)) {
         return from_value;
     }
 
     if (type_is_reference_of(&from_type, &to_type)) {
-        LLVMTypeRef to_type_llvm = type_get_llvm_type(&to_type, substitutions);
+        LLVMTypeRef to_type_llvm = type_get_llvm_type(&to_type);
         return LLVMBuildLoad2(context.llvm_info.builder, to_type_llvm, from_value, "deref");
     }
 
@@ -486,11 +390,10 @@ Expression_Number_Literal expression_get_number_literal(Expression* expression) 
             massert(false, "not implemented");
         case et_number_literal:
             return expression_get_number_literal_number_literal(expression);
-        case et_interface_function_call:
+        case et_function_call:
         case et_variable:
         case et_multi_expression:
         case et_cast:
-        case et_function_call:
         case et_invalid:
             massert(false, "unexpected expression");
     }

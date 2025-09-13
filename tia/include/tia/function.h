@@ -4,53 +4,33 @@
 #include "tia/lists.h"
 #include "tia/scope.h"
 
-typedef struct LLVM_Type_Substitutions_To_LLVM_Value {
-    Type_Substitution_List substitutions;
-    LLVMValueRef value;
-} LLVM_Type_Substitutions_To_LLVM_Value;
-
-typedef struct LLVM_Function_Info {
-    LLVM_Type_Substitutions_To_LLVM_Value_List function_value_by_substitutions;
-} LLVM_Function_Info;
-
-typedef struct Function {
+typedef struct Function_Instance {
     Type type;
-    char* name;
+    Function* function;
     Scope parameters_scope;
     Scope body_scope;
+    LLVMValueRef function_value;
+    Template_To_Type template_to_type;
+} Function_Instance;
+
+typedef struct Function {
+    char* name;
     Ast* ast;
-    Type_Substitution_List constant_substitutions;
-    union {
-        LLVM_Function_Info llvm_info;
-    };
-    u64 interface_instance_number_count_down_from;
+    Variable_List parameters;
+    Type return_type;
+    Function_Instance_List instances;
 } Function;
 
 Function* function_new(Ast* ast);
 
-void function_implement(Function* function);
+void function_implement(Function_Instance* function);
 
-Type* function_get_return_type(Function* function);
+void function_llvm_prototype_instance(Function_Instance* function_instance);
 
-Type* function_get_parameter_type(Function* function, u64 index);
+void function_llvm_implement_instance(Function_Instance* function_instance);
 
-char* function_get_mangled_name(Function* function, Type_Substitution_List* substitutions);
+Function_Instance* function_find(Type_List* parameters, char* name, Ast* ast, bool log_error);
 
-// returns the interface instance number for this
-u64 function_add_constant_substitution(Function* function, Type_Substitution* substitution);
+Type* function_get_parameter_type(Function_Instance* function, u64 index);
 
-void function_add_constant_substitution_with_interface_instance_number(Function* function, Type_Substitution* substitution, u64 interface_instance_number);
-
-Type_Substitution function_find_constant_substitution(Function* function, u64 interface_instance_number);
-
-typedef struct Function_Find_Result {
-    Function* function;
-    Type_Substitution_List substitutions;
-    Type there_is_an_interface_function_return_type;
-} Function_Find_Result;
-
-Function_Find_Result function_find(Type_List* parameters, char* name, Ast* ast, bool log_error, bool allow_interface_function);
-
-LLVMValueRef function_compile_llvm(Function* function, Type_Substitution_List* substitutions);
-
-LLVMValueRef function_get_llvm_value(Function* function, Type_Substitution_List* substitutions);
+char* function_get_mangled_name(Function_Instance* function);

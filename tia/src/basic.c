@@ -70,16 +70,17 @@ bool is_number_float(char* c) {
 }
 
 double string_to_double(char* string) {
-    const char* str = "3.14159";
     char* endptr;
-    double value = strtod(str, &endptr);
+    double value = strtod(string, &endptr);
     return value;
 }
 
 char* read_file(const char* path_) {
     char* path = make_portable_slashes(path_);
-    FILE* file = fopen(path, "rb");
-    if (file == NULL) {
+
+    FILE* file = NULL;
+    errno_t err = fopen_s(&file, path, "rb");
+    if (err != 0 || file == NULL) {
         return NULL;
     }
     fseek(file, 0, SEEK_END);

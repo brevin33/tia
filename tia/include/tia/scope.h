@@ -7,12 +7,8 @@ typedef struct Function Function;
 typedef struct Variable {
     char* name;
     Type type;
-} Variable;
-
-typedef struct Variable_LLVM_Value {
     LLVMValueRef value;
-    Variable* variable;
-} Variable_LLVM_Value;
+} Variable;
 
 typedef struct Scope Scope;
 typedef struct Scope {
@@ -30,8 +26,6 @@ Variable* scope_add_variable(Scope* scope, Variable* variable);
 
 Variable* scope_get_variable(Scope* scope, char* name);
 
-void scope_add_statements(Scope* scope, Ast* ast, Function* function);
+void scope_add_statements(Scope* scope, Ast* ast, Function_Instance* function);
 
-LLVMValueRef scope_get_variable_value(Variable_LLVM_Value_List* var_to_llvm_val, Variable* variable);
-
-bool scope_compile_scope(Scope* scope, Function* func, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value);
+bool scope_compile_scope(Scope* scope, Function_Instance* func);

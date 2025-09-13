@@ -209,19 +209,6 @@ Function** function_pointer_list_get(Function_Pointer_List* list, u64 index);
 Function* function_pointer_list_get_function(Function_Pointer_List* list, u64 index);
 void function_pointer_list_pop(Function_Pointer_List* list);
 
-typedef struct Type_Substitution Type_Substitution;
-typedef struct {
-    Type_Substitution* data;
-    u64 count;
-    u64 capacity;
-} Type_Substitution_List;
-
-Type_Substitution_List type_substitution_list_create(u64 initial_size);
-Type_Substitution* type_substitution_list_add(Type_Substitution_List* list, Type_Substitution* type_substitution);
-Type_Substitution* type_substitution_list_get(Type_Substitution_List* list, u64 index);
-void type_substitution_list_pop(Type_Substitution_List* list);
-Type_Substitution_List type_substitution_list_copy(Type_Substitution_List* list);
-
 typedef struct {
     LLVMValueRef* data;
     u64 count;
@@ -233,39 +220,26 @@ LLVMValueRef* llvm_value_ref_list_add(LLVMValueRef_List* list, LLVMValueRef valu
 LLVMValueRef* llvm_value_ref_list_get(LLVMValueRef_List* list, u64 index);
 void llvm_value_ref_list_pop(LLVMValueRef_List* list);
 
-typedef struct LLVM_Type_Substitutions_To_LLVM_Value LLVM_Type_Substitutions_To_LLVM_Value;
+typedef struct Function_Instance Function_Instance;
+typedef struct Function_Instance_List {
+    Function_Instance* data;
+    u64 count;
+    u64 capacity;
+} Function_Instance_List;
 
+Function_Instance_List function_instance_list_create(u64 initial_size);
+Function_Instance* function_instance_list_add(Function_Instance_List* list, Function_Instance* function_instance);
+Function_Instance* function_instance_list_get(Function_Instance_List* list, u64 index);
+void function_instance_list_pop(Function_Instance_List* list);
+
+typedef struct Template_Map Template_Map;
 typedef struct {
-    LLVM_Type_Substitutions_To_LLVM_Value* data;
+    Template_Map* data;
     u64 count;
     u64 capacity;
-} LLVM_Type_Substitutions_To_LLVM_Value_List;
+} Template_Map_List;
 
-LLVM_Type_Substitutions_To_LLVM_Value_List llvm_type_substitutions_to_llvm_value_list_create(u64 initial_size);
-LLVM_Type_Substitutions_To_LLVM_Value* llvm_type_substitutions_to_llvm_value_list_add(LLVM_Type_Substitutions_To_LLVM_Value_List* list, LLVM_Type_Substitutions_To_LLVM_Value* llvm_type_substitutions_to_llvm_value);
-LLVM_Type_Substitutions_To_LLVM_Value* llvm_type_substitutions_to_llvm_value_list_get(LLVM_Type_Substitutions_To_LLVM_Value_List* list, u64 index);
-void llvm_type_substitutions_to_llvm_value_list_pop(LLVM_Type_Substitutions_To_LLVM_Value_List* list);
-
-typedef struct Variable_LLVM_Value Variable_LLVM_Value;
-typedef struct Variable_LLVM_Value_List {
-    Variable_LLVM_Value* data;
-    u64 count;
-    u64 capacity;
-} Variable_LLVM_Value_List;
-
-Variable_LLVM_Value_List variable_llvm_value_list_create(u64 initial_size);
-Variable_LLVM_Value* variable_llvm_value_list_add(Variable_LLVM_Value_List* list, Variable_LLVM_Value* variable_llvm_value);
-Variable_LLVM_Value* variable_llvm_value_list_get(Variable_LLVM_Value_List* list, u64 index);
-void variable_llvm_value_list_pop(Variable_LLVM_Value_List* list);
-
-typedef struct Type_Interface_Function Type_Interface_Function;
-typedef struct {
-    Type_Interface_Function* data;
-    u64 count;
-    u64 capacity;
-} Type_Interface_Function_List;
-
-Type_Interface_Function_List type_interface_function_list_create(u64 initial_size);
-Type_Interface_Function* type_interface_function_list_add(Type_Interface_Function_List* list, Type_Interface_Function* type_interface_function);
-Type_Interface_Function* type_interface_function_list_get(Type_Interface_Function_List* list, u64 index);
-void type_interface_function_list_pop(Type_Interface_Function_List* list);
+Template_Map_List template_map_list_create(u64 initial_size);
+Template_Map* template_map_list_add(Template_Map_List* list, Template_Map* template_map);
+Template_Map* template_map_list_get(Template_Map_List* list, u64 index);
+void template_map_list_pop(Template_Map_List* list);

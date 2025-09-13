@@ -23,11 +23,6 @@ void file_prototype_types(File* file) {
     for (u64 i = 0; i < file_ast->global_declarations.count; i++) {
         Ast* global_declaration = ast_list_get(&file_ast->global_declarations, i);
         switch (global_declaration->type) {
-            case ast_interface: {
-                Type_Base* type_base = type_prototype_interface(global_declaration);
-                type_base_pointer_list_add(&file->types, type_base);
-                break;
-            }
             default:
                 break;
         }
@@ -40,7 +35,6 @@ void file_prototype_functions(File* file) {
     for (u64 i = 0; i < file_ast->global_declarations.count; i++) {
         Ast* global_declaration = ast_list_get(&file_ast->global_declarations, i);
         if (global_declaration->type == ast_function_declaration) {
-            Ast_Function_Declaration* function_declaration = &global_declaration->function_declaration;
             Function* function = function_new(global_declaration);
             function_pointer_list_add(&file->functions, function);
         }
@@ -49,13 +43,15 @@ void file_prototype_functions(File* file) {
 
 void file_implement(File* file) {
     for (u64 i = 0; i < file->types.count; i++) {
-        Type_Base* type_base = type_base_pointer_list_get_type_base(&file->types, i);
-        type_implement_interface(type_base);
+        massert(false, "not implemented");
     }
 
     for (u64 i = 0; i < file->functions.count; i++) {
         Function* function = function_pointer_list_get_function(&file->functions, i);
-        function_implement(function);
+        for (u64 j = 0; j < function->instances.count; j++) {
+            Function_Instance* function_instance = &function->instances.data[j];
+            function_implement(function_instance);
+        }
     }
 }
 

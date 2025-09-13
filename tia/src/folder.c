@@ -1,6 +1,14 @@
 #include "tia.h"
 #include "tia/file.h"
 
+void make_sure_main_does_not_use_interfaces(Folder* folder) {
+    for (u64 i = 0; i < context.functions.count; i++) {
+        Function* function = context.functions.data[i];
+        if (strcmp(function->name, "main") == 0) {
+        }
+    }
+}
+
 Folder* folder_new(char* path) {
     Folder* folder = alloc(sizeof(Folder));
     memset(folder, 0, sizeof(Folder));

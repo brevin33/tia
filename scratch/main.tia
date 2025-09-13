@@ -1,15 +1,11 @@
-i32 test2(i32 a){
-	any$8 b = test(a)
+#T& foo(#T& a){
 	return a
 }
 
-any$1 test(any$1 a){
-	return a
-}
 
 i32 main(){
-	i32 a = test2(1)
-	return a
+	i32 b = 3
+	i32& a = foo(b)
+	a = 4
+	return b
 }
-
-

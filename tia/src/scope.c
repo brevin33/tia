@@ -1,5 +1,3 @@
-
-#include <llvm-c/Core.h>
 #include "tia.h"
 
 Scope scope_create(Scope* parent) {
@@ -21,7 +19,6 @@ Variable* scope_add_variable(Scope* scope, Variable* variable) {
     }
     if (existing != NULL) return NULL;
 
-    Type_Type var_type_type = type_get_type(&variable->type);
     Variable var = *variable;
 
     Variable* in_list_variable = variable_list_add(&scope->variables, &var);
@@ -41,34 +38,28 @@ Variable* scope_get_variable(Scope* scope, char* name) {
     return NULL;
 }
 
-bool scope_compile_scope(Scope* scope, Function* func, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value) {
-    LLVMBasicBlockRef last_block = context.llvm_info.current_block;
-
+bool scope_compile_scope(Scope* scope, Function_Instance* func) {
+    LLVMValueRef function_value = func->function_value;
     LLVMBasicBlockRef alloca_block = LLVMAppendBasicBlock(function_value, "alloca");
     LLVMBuildBr(context.llvm_info.builder, alloca_block);
     LLVMPositionBuilderAtEnd(context.llvm_info.builder, alloca_block);
-    context.llvm_info.current_block = alloca_block;
 
     for (u64 i = 0; i < scope->variables.count; i++) {
         Variable* variable = variable_list_get(&scope->variables, i);
-        Variable_LLVM_Value v = {0};
-        v.variable = variable;
         Type* variable_type = &variable->type;
-        Type real_variable_type = type_get_real_type(variable_type, substitutions);
-        Type_Type real_variable_type_type = type_get_type(&real_variable_type);
+        Type_Type real_variable_type_type = type_get_type(variable_type);
         if (real_variable_type_type == type_ref) {
-            v.value = NULL;
+            variable->value = NULL;
             // don't add here we add in the variable declaration
         } else {
-            LLVMTypeRef variable_type = type_get_llvm_type(&variable->type, substitutions);
-            v.value = LLVMBuildAlloca(context.llvm_info.builder, variable_type, variable->name);
-            variable_llvm_value_list_add(var_to_llvm_val, &v);
+            LLVMTypeRef variable_type = type_get_llvm_type(&variable->type);
+            variable->value = LLVMBuildAlloca(context.llvm_info.builder, variable_type, variable->name);
         }
     }
     bool exitedScope = false;
     for (u64 i = 0; i < scope->statements.count; i++) {
         Statement* statement = statement_list_get(&scope->statements, i);
-        exitedScope = statement_compile(statement, func, scope, substitutions, var_to_llvm_val, function_value);
+        exitedScope = statement_compile(statement, func, scope);
         if (exitedScope) {
             break;
         }
@@ -77,18 +68,7 @@ bool scope_compile_scope(Scope* scope, Function* func, Type_Substitution_List* s
     return exitedScope;
 }
 
-LLVMValueRef scope_get_variable_value(Variable_LLVM_Value_List* var_to_llvm_val, Variable* variable) {
-    for (u64 i = 0; i < var_to_llvm_val->count; i++) {
-        Variable_LLVM_Value* v = variable_llvm_value_list_get(var_to_llvm_val, i);
-        if (v->variable == variable) {
-            return v->value;
-        }
-    }
-    massert(false, "variable not found");
-    return NULL;
-}
-
-void scope_add_statements(Scope* scope, Ast* ast, Function* function) {
+void scope_add_statements(Scope* scope, Ast* ast, Function_Instance* function) {
     massert(ast->type == ast_scope, "ast is not ast_type");
     Ast_Scope* scope_ast = &ast->scope;
     for (u64 i = 0; i < scope_ast->statements.count; i++) {

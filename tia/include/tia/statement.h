@@ -57,26 +57,26 @@ typedef struct Statement {
     };
 } Statement;
 
-Statement statement_create(Ast* ast, Scope* scope, Function* function);
+Statement statement_create(Ast* ast, Scope* scope, Function_Instance* function);
 
-Statement statement_create_return(Ast* ast, Scope* scope, Function* function);
+Statement statement_create_return(Ast* ast, Scope* scope, Function_Instance* function);
 
-Statement statement_create_assignment(Ast* ast, Scope* scope, Function* function);
+Statement statement_create_assignment(Ast* ast, Scope* scope, Function_Instance* function);
 
-Statement statement_create_ignore(Ast* ast, Scope* scope, Function* function);
+Statement statement_create_ignore(Ast* ast, Scope* scope, Function_Instance* function);
 
-Statement statement_create_expression(Ast* ast, Scope* scope, Function* function);
+Statement statement_create_expression(Ast* ast, Scope* scope, Function_Instance* function);
 
-Statement statement_create_scope(Ast* ast, Scope* scope, Function* function);
+Statement statement_create_scope(Ast* ast, Scope* scope, Function_Instance* function);
 
 Type* statement_get_assignee_type(Assignee* assignee);
 
-bool statement_compile(Statement* statement, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value);
+bool statement_compile(Statement* statement, Function_Instance* func, Scope* scope);
 
-bool statement_compile_return(Statement* statement, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value);
+bool statement_compile_return(Statement* statement, Function_Instance* func, Scope* scope);
 
-bool statement_compile_assignment(Statement* statement, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value);
+bool statement_compile_assignment(Statement* statement, Function_Instance* func, Scope* scope);
 
-bool statement_compile_expression(Statement* statement, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value);
+bool statement_compile_expression(Statement* statement, Function_Instance* func, Scope* scope);
 
-bool statement_compile_scope(Statement* statement, Function* func, Scope* scope, Type_Substitution_List* substitutions, Variable_LLVM_Value_List* var_to_llvm_val, LLVMValueRef function_value);
+bool statement_compile_scope(Statement* statement, Function_Instance* func, Scope* scope);

@@ -9,3 +9,5 @@ typedef struct Folder {
 } Folder;
 
 Folder* folder_new(char* path);
+
+void make_sure_main_does_not_use_interfaces(Folder* folder);

@@ -17,7 +17,6 @@
 typedef struct LLVM_Context_Info {
     LLVMContextRef llvm_context;
     LLVMBuilderRef builder;
-    LLVMBasicBlockRef current_block;
     LLVMTargetDataRef data_layout;
     LLVMModuleRef module;
 } LLVM_Context_Info;

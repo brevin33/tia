@@ -18,7 +18,6 @@ typedef struct Type {
     Ast* ast;
     Type_Base* base;
     Type_Modifier_List modifiers;
-    u64 interface_instance_number;
 } Type;
 
 typedef enum Type_Type {
@@ -31,7 +30,7 @@ typedef enum Type_Type {
     type_void,
     type_function,
     type_multi_value,
-    type_interface,
+    type_template,
     // modifiers
     type_ref,
 } Type_Type;
@@ -53,24 +52,18 @@ typedef struct Type_Function {
     Type_List parameters;
 } Type_Function;
 
-typedef struct Type_Substitution {
-    Type_Base* substituted_type;
-    u64 interface_instance_number;
-    Type new_type;
-} Type_Substitution;
-
 typedef struct Type_Multi_Value {
     Type_List types;
 } Type_Multi_Value;
 
-typedef struct Type_Interface_Function {
-    Type function_type;
-    char* function_name;
-} Type_Interface_Function;
+typedef struct Template_Map {
+    char* name;
+    Type type;
+} Template_Map;
 
-typedef struct Type_Interface {
-    Type_Interface_Function_List functions;
-} Type_Interface;
+typedef struct Template_To_Type {
+    Template_Map_List templates;
+} Template_To_Type;
 
 typedef struct Type_Base {
     Type_Type type;
@@ -82,7 +75,6 @@ typedef struct Type_Base {
         Type_Uint uint;
         Type_Function function;
         Type_Multi_Value multi_value;
-        Type_Interface interface;
     };
 } Type_Base;
 
@@ -104,18 +96,18 @@ Type_Base* type_get_function_type_base(Type_List* parameters, Type return_type);
 Type type_get_function_type(Type_List* parameters, Type return_type);
 Type_Base* type_get_invalid_type_base();
 Type type_get_invalid_type();
+Type_Base* type_get_template_type_base();
+Type type_get_template_type(Ast* ast);
 Type_Base* type_get_multi_value_type_base(Type_List* types);
 Type type_get_multi_value_type(Type_List* types);
-
-Type_Base* type_prototype_interface(Ast* ast);
-void type_implement_interface(Type_Base* type_base);
 
 Type_Base* type_find_base_type_without_int_finding(const char* name);
 Type_Base* type_find_base_type(const char* name);
 Type_Base* type_find_base_type_ast(Ast* ast);
 // Type type_find(const char* name);
-Type type_find_ast(Ast* ast, bool log_error, u64* ref_interface_instance_number_count_down_from);
+Type type_find_ast(Ast* ast, Template_To_Type* template_to_type, bool log_error);
 
+const char* type_get_template_base_name(Type* type);
 char* type_get_name(Type* type);
 char* get_function_type_name(Type_List* parameters, Type return_type);
 char* get_multi_value_type_name(Type_List* types);
@@ -124,20 +116,18 @@ Type_Type type_get_type(Type* type);
 Type type_deref(Type* type);       // pointer go to references
 Type type_underlying(Type* type);  // pointer go to underlying value
 Type type_get_reference(Type* type);
-Type type_get_real_type(Type* type, Type_Substitution_List* substitutions);
+
+void type_add_mapping(Template_To_Type* template_to_type, const char* name, Type* type);
+Type* type_get_mapping(Template_To_Type* template_to_type, const char* name);
+bool type_mapping_equal(Template_To_Type* template_to_type, Template_To_Type* other_template_to_type);
+Type type_get_mapped_type(Template_To_Type* template_to_type, Type* type);
 
 bool type_is_equal(Type* type_a, Type* type_b);
 bool type_base_is_invalid(Type_Base* type);
 bool type_is_invalid(Type* type);
-bool type_substitutions_is_equal(Type_Substitution_List* substitutions_a, Type_Substitution_List* substitutions_b);
 bool type_is_reference_of(Type* ref, Type* of);
-
-//returns the function return type
-Type type_interface_is_there_a_interface_function(Type_List* arguments, char* function_name);
-
-bool type_fullfills_interface(Type* type, Type* interface);
+bool type_is_template(Type* type);
 
 // LLVM compilation
-LLVMTypeRef type_get_llvm_type(Type* type, Type_Substitution_List* substitutions);
-LLVMTypeRef type_get_llvm_type_no_substitution(Type* type);
-LLVMTypeRef type_get_base_llvm_type_no_substitution(Type_Base* type_base);
+LLVMTypeRef type_get_llvm_type(Type* type);
+LLVMTypeRef type_get_base_llvm_type(Type_Base* type_base);
