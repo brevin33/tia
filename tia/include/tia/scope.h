@@ -15,6 +15,7 @@ typedef struct Scope {
     Scope* parent;
     Statement_List statements;
     Variable_List variables;
+    Template_To_Type template_to_type;
     union {
         LLVMBasicBlockRef continue_block;
     };
@@ -29,3 +30,7 @@ Variable* scope_get_variable(Scope* scope, char* name);
 void scope_add_statements(Scope* scope, Ast* ast, Function_Instance* function);
 
 bool scope_compile_scope(Scope* scope, Function_Instance* func);
+
+Type* scope_get_templated_type(Scope* scope, char* name);
+
+Template_Map* scope_add_template(Scope* scope, char* name, Type* type);

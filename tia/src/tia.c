@@ -14,6 +14,7 @@ static void context_init(Arena* arena) {
 
 Folder* create_tia_project(char* path, Arena* arena) {
     context_init(arena);
+
     Folder* folder = folder_new(path);
 
     if (context.numberOfErrors > 0) {

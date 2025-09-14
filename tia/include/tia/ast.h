@@ -22,7 +22,19 @@ typedef enum Ast_Type {
     ast_assignment,
     ast_multi_expression,
     ast_function_call,
+    ast_struct_declaration,
+    ast_member_access,
 } Ast_Type;
+
+typedef struct Ast_Member_Access {
+    Ast* value;
+    char* member_name;
+} Ast_Member_Access;
+
+typedef struct Ast_Struct_Declaration {
+    char* name;
+    Ast_List fields;
+} Ast_Struct_Declaration;
 
 typedef struct Ast_Function_Call {
     char* function_name;
@@ -34,6 +46,7 @@ typedef struct Ast_Function_Declaration {
     Ast_List parameters;
     char* name;
     Ast* body;
+    bool is_extern_c;
 } Ast_Function_Declaration;
 
 typedef struct Ast_Assignee {
@@ -116,10 +129,14 @@ typedef struct Ast {
         Ast_Assignment assignment;
         Ast_Multi_Expression multi_expression;
         Ast_Function_Call function_call;
+        Ast_Struct_Declaration struct_declaration;
+        Ast_Member_Access member_access;
     };
 } Ast;
 
 Ast ast_create(Token* tokens);
+
+Ast ast_struct_declaration_parse(Token** tokens);
 
 Ast ast_general_parse(Token** tokens);
 

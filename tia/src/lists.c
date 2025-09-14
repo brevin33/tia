@@ -773,3 +773,40 @@ Template_Map* template_map_list_get(Template_Map_List* list, u64 index) {
 void template_map_list_pop(Template_Map_List* list) {
     list->count--;
 }
+
+Type_Struct_Field_List type_struct_field_list_create(u64 initial_size) {
+    Type_Struct_Field_List list;
+    if (initial_size == 0) {
+        list.data = NULL;
+        list.count = 0;
+        list.capacity = 0;
+    } else {
+        list.data = alloc(initial_size * sizeof(Type_Struct_Field));
+        list.count = 0;
+        list.capacity = initial_size;
+    }
+    return list;
+}
+
+Type_Struct_Field* type_struct_field_list_add(Type_Struct_Field_List* list, Type_Struct_Field* type_struct_field) {
+    if (list->count >= list->capacity) {
+        if (list->capacity == 0) {
+            list->capacity = 8;
+        }
+        list->capacity *= 2;
+        void* old_data = list->data;
+        list->data = alloc(list->capacity * sizeof(Type_Struct_Field));
+        memcpy(list->data, old_data, list->count * sizeof(Type_Struct_Field));
+    }
+    list->data[list->count] = *type_struct_field;
+    list->count++;
+    return &list->data[list->count - 1];
+}
+
+Type_Struct_Field* type_struct_field_list_get(Type_Struct_Field_List* list, u64 index) {
+    return &list->data[index];
+}
+
+void type_struct_field_list_pop(Type_Struct_Field_List* list) {
+    list->count--;
+}

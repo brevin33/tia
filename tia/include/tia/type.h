@@ -4,10 +4,12 @@
 #include "tia/llvm.h"
 
 typedef struct Type_Base Type_Base;
+typedef struct Scope Scope;
 
 typedef enum Type_Modifier_Type {
     type_modifier_invalid = 0,
     type_modifier_ref,
+    type_modifier_ptr,
 } Type_Modifier_Type;
 
 typedef struct Type_Modifier {
@@ -31,8 +33,11 @@ typedef enum Type_Type {
     type_function,
     type_multi_value,
     type_template,
+    type_struct,
+    type_compile_time_type,
     // modifiers
     type_ref,
+    type_ptr,
 } Type_Type;
 
 typedef struct Type_Int {
@@ -46,6 +51,15 @@ typedef struct Type_Float {
 typedef struct Type_Uint {
     u64 bits;
 } Type_Uint;
+
+typedef struct Type_Struct_Field {
+    char* name;
+    Type type;
+} Type_Struct_Field;
+
+typedef struct Type_Struct {
+    Type_Struct_Field_List fields;
+} Type_Struct;
 
 typedef struct Type_Function {
     Type return_type;
@@ -75,6 +89,7 @@ typedef struct Type_Base {
         Type_Uint uint;
         Type_Function function;
         Type_Multi_Value multi_value;
+        Type_Struct struct_;
     };
 } Type_Base;
 
@@ -100,27 +115,41 @@ Type_Base* type_get_template_type_base();
 Type type_get_template_type(Ast* ast);
 Type_Base* type_get_multi_value_type_base(Type_List* types);
 Type type_get_multi_value_type(Type_List* types);
+Type_Base* type_get_struct_type_base(Type_List* types, String_List* names, char* name);
+Type type_get_struct_type(Type_List* types, String_List* names, char* name);
+Type_Base* type_get_compile_time_type_base();
+Type type_get_compile_time_type(Ast* ast);
+
+Type_Base* type_prototype_struct(Ast* ast);
+void type_implement_struct(Type_Base* ast);
 
 Type_Base* type_find_base_type_without_int_finding(const char* name);
 Type_Base* type_find_base_type(const char* name);
 Type_Base* type_find_base_type_ast(Ast* ast);
+
 // Type type_find(const char* name);
-Type type_find_ast(Ast* ast, Template_To_Type* template_to_type, bool log_error);
+Type type_find_ast(Ast* ast, Scope* scope, bool log_error);
 
 const char* type_get_template_base_name(Type* type);
 char* type_get_name(Type* type);
 char* get_function_type_name(Type_List* parameters, Type return_type);
 char* get_multi_value_type_name(Type_List* types);
+char* type_get_struct_name(const char* last_name, Template_To_Type* template_to_type);
 
 Type_Type type_get_type(Type* type);
 Type type_deref(Type* type);       // pointer go to references
 Type type_underlying(Type* type);  // pointer go to underlying value
 Type type_get_reference(Type* type);
+Type type_get_ptr(Type* type);
+
+Type type_copy(Type* type);
+Template_To_Type copy_template_to_type(Template_To_Type* template_to_type);
 
 void type_add_mapping(Template_To_Type* template_to_type, const char* name, Type* type);
 Type* type_get_mapping(Template_To_Type* template_to_type, const char* name);
 bool type_mapping_equal(Template_To_Type* template_to_type, Template_To_Type* other_template_to_type);
 Type type_get_mapped_type(Template_To_Type* template_to_type, Type* type);
+bool type_needs_mapped(Template_To_Type* template_to_type, Type* type);
 
 bool type_is_equal(Type* type_a, Type* type_b);
 bool type_base_is_invalid(Type_Base* type);

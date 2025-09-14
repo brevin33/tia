@@ -21,6 +21,10 @@ typedef enum TokenType_ {
     tt_ref,
     tt_dollar,
     tt_hash,
+    tt_struct,
+    tt_dot,
+    tt_mult,
+    tt_extern_c,
 } TokenType_;
 
 typedef struct Token {

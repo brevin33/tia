@@ -12,6 +12,7 @@ typedef struct File {
     Ast* ast;
     Function_Pointer_List functions;
     Type_Base_Pointer_List types;
+    Statement_List global_declarations;
 } File;
 
 File* file_new(char* path);
@@ -19,6 +20,10 @@ File* file_new(char* path);
 void file_prototype_types(File* file);
 
 void file_prototype_functions(File* file);
+
+void file_add_global_variables(File* file);
+
+void file_check_for_invalid_global_statements(File* file);
 
 void file_implement(File* file);
 

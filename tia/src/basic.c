@@ -36,6 +36,15 @@ void* alloc(size_t size) {
     return arena_alloc(context.arena, size);
 }
 
+u64 get_number_of_digits(u64 number) {
+    u64 count = 0;
+    while (number > 0) {
+        number /= 10;
+        count++;
+    }
+    return count;
+}
+
 u64 get_string_uint(const char* string, bool* out_error) {
     errno = 0;
     char* endptr;

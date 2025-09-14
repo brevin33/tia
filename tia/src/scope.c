@@ -9,6 +9,11 @@ Scope scope_create(Scope* parent) {
 }
 
 Variable* scope_add_variable(Scope* scope, Variable* variable) {
+    if (variable->type.base->type == type_compile_time_type) {
+        Variable* new = alloc(sizeof(Variable));
+        *new = *variable;
+        return new;
+    }
     Variable* existing = NULL;
     for (u64 i = 0; i < scope->variables.count; i++) {
         Variable* existing_variable = variable_list_get(&scope->variables, i);
@@ -38,6 +43,33 @@ Variable* scope_get_variable(Scope* scope, char* name) {
     return NULL;
 }
 
+Type* scope_get_templated_type(Scope* scope, char* name) {
+    for (u64 i = 0; i < scope->template_to_type.templates.count; i++) {
+        Template_Map* template_map = template_map_list_get(&scope->template_to_type.templates, i);
+        if (strcmp(template_map->name, name) == 0) {
+            return &template_map->type;
+        }
+    }
+    if (scope->parent != NULL) {
+        return scope_get_templated_type(scope->parent, name);
+    }
+    return NULL;
+}
+
+Template_Map* scope_add_template(Scope* scope, char* name, Type* type) {
+    // make sure the template doesn't already exist
+    for (u64 i = 0; i < scope->template_to_type.templates.count; i++) {
+        Template_Map* template_map = template_map_list_get(&scope->template_to_type.templates, i);
+        if (strcmp(template_map->name, name) == 0) {
+            return NULL;
+        }
+    }
+    Template_Map template_map = {0};
+    template_map.name = name;
+    template_map.type = *type;
+    return template_map_list_add(&scope->template_to_type.templates, &template_map);
+}
+
 bool scope_compile_scope(Scope* scope, Function_Instance* func) {
     LLVMValueRef function_value = func->function_value;
     LLVMBasicBlockRef alloca_block = LLVMAppendBasicBlock(function_value, "alloca");
@@ -53,7 +85,11 @@ bool scope_compile_scope(Scope* scope, Function_Instance* func) {
             // don't add here we add in the variable declaration
         } else {
             LLVMTypeRef variable_type = type_get_llvm_type(&variable->type);
-            variable->value = LLVMBuildAlloca(context.llvm_info.builder, variable_type, variable->name);
+            if (variable->type.base->type == type_compile_time_type) {
+                variable->value = NULL;
+            } else {
+                variable->value = LLVMBuildAlloca(context.llvm_info.builder, variable_type, variable->name);
+            }
         }
     }
     bool exitedScope = false;

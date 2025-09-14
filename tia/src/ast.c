@@ -2,6 +2,7 @@
 #include "tia/basic.h"
 #include "tia/lists.h"
 #include "tia/token.h"
+#include "tia/type.h"
 
 Ast ast_create(Token* tokens) {
     Ast ast;
@@ -78,6 +79,9 @@ bool ast_parseable_as_type(Token** tokens) {
             case tt_ref:
                 token++;
                 break;
+            case tt_mult:
+                token++;
+                break;
             default:
                 *tokens = token;
                 return true;
@@ -128,12 +132,30 @@ Ast ast_type_parse(Token** tokens) {
                 token++;
                 break;
             }
+            case tt_mult: {
+                Type_Modifier type_modifier = {0};
+                type_modifier.type = type_modifier_ptr;
+                type_modifier_list_add(&modifiers, &type_modifier);
+                token++;
+                break;
+            }
             default:
                 continue_loop = false;
                 break;
         }
         if (!continue_loop) break;
     }
+
+    for (i64 i = 0; i < (i64)modifiers.count - 1; i++) {
+        Type_Modifier* modifier = type_modifier_list_get(&modifiers, i);
+        if (modifier->type == type_modifier_ref) {
+            type.num_tokens = token - type.token;
+            log_error_ast(&type, "Reference can only be the last type modifier");
+            Ast err = {0};
+            return err;
+        }
+    }
+
     type.type_info.modifiers = modifiers;
 
     type.num_tokens = token - type.token;
@@ -171,6 +193,13 @@ Ast ast_function_declaration_parse(Token** tokens) {
     Ast function_declaration = {0};
     function_declaration.type = ast_function_declaration;
     function_declaration.token = token;
+
+    if (token->type == tt_extern_c) {
+        token++;
+        function_declaration.function_declaration.is_extern_c = true;
+    } else {
+        function_declaration.function_declaration.is_extern_c = false;
+    }
 
     Ast type = ast_type_parse(&token);
     function_declaration.function_declaration.return_type = alloc(sizeof(Ast));
@@ -219,11 +248,21 @@ Ast ast_function_declaration_parse(Token** tokens) {
     function_declaration.function_declaration.parameters = parameters;
 
     if (token->type == tt_open_brace) {
+        if (function_declaration.function_declaration.is_extern_c) {
+            log_error_token(token, "expected function to have no body as it is extern_c");
+            Ast err = {0};
+            return err;
+        }
         Ast scope = ast_scope_parse(&token);
         if (scope.type == ast_invalid) return scope;
         function_declaration.function_declaration.body = alloc(sizeof(Ast));
         *function_declaration.function_declaration.body = scope;
     } else {
+        if (!function_declaration.function_declaration.is_extern_c) {
+            log_error_token(token, "expected function to have a body as it is not extern_c");
+            Ast err = {0};
+            return err;
+        }
         function_declaration.function_declaration.body = NULL;
     }
 
@@ -380,9 +419,95 @@ Ast ast_hash_parse(Token** tokens) {
     }
 }
 
+Ast ast_struct_declaration_parse(Token** tokens) {
+    Token* token = *tokens;
+    Ast ast = {0};
+    ast.type = ast_struct_declaration;
+    ast.token = token;
+
+    massert(token->type == tt_struct, "token type is not tt_struct");
+    token++;
+    if (token->type != tt_identifier) {
+        log_error_token(token, "Expected struct name");
+        Ast err = {0};
+        return err;
+    }
+    char* struct_name = token_get_string(token);
+    token++;
+
+    if (token->type != tt_open_brace) {
+        log_error_token(token, "Expected open brace after struct name");
+        Ast err = {0};
+        return err;
+    }
+    token++;
+
+    Ast_List fields = ast_list_create(0);
+    while (true) {
+        Ast variable_declaration = ast_variable_declaration_parse(&token);
+        if (variable_declaration.type == ast_invalid) {
+            // error recovery to try and still parse the struct
+            while (token->type != tt_end_statement && token->type != tt_end_of_file && token->type != tt_close_brace) {
+                token++;
+            }
+            if (token->type == tt_end_of_file) {
+                Ast err = {0};
+                return err;
+            } else if (token->type == tt_close_brace) {
+                break;
+            } else if (token->type == tt_end_statement) {
+                token++;
+                if (token->type == tt_close_brace) {
+                    break;
+                }
+                continue;
+            }
+        }
+        ast_list_add(&fields, &variable_declaration);
+        if (token->type != tt_end_statement) {
+            log_error_token(token, "Expected end statement");
+            // error recovery to try and still parse the struct
+            while (token->type != tt_end_statement && token->type != tt_end_of_file && token->type != tt_close_brace) {
+                token++;
+            }
+            if (token->type == tt_end_of_file) {
+                Ast err = {0};
+                return err;
+            } else if (token->type == tt_close_brace) {
+                break;
+            } else if (token->type == tt_end_statement) {
+                token++;
+                if (token->type == tt_close_brace) {
+                    break;
+                }
+                continue;
+            }
+        }
+        token++;
+        if (token->type == tt_close_brace) {
+            break;
+        }
+    }
+    if (fields.count == 0) {
+        log_error_token(token, "Expected at least one field for the struct");
+        Ast err = {0};
+        return err;
+    }
+    massert(token->type == tt_close_brace, "token type is not tt_close_brace");
+    token++;
+
+    ast.struct_declaration.name = struct_name;
+    ast.struct_declaration.fields = fields;
+    ast.num_tokens = token - ast.token;
+    *tokens = token;
+    return ast;
+}
+
 Ast ast_general_parse(Token** tokens) {
     Token* token = *tokens;
     switch (token->type) {
+        case tt_extern_c:
+            return ast_function_declaration_parse(tokens);
         case tt_hash:
             return ast_hash_parse(tokens);
         case tt_identifier:
@@ -394,6 +519,9 @@ Ast ast_general_parse(Token** tokens) {
         case tt_open_paren:
         case tt_open_bracket:
         case tt_number:
+        case tt_struct: {
+            return ast_struct_declaration_parse(tokens);
+        }
         case tt_string: {
             TokenType_ delimiters[] = {tt_end_statement};
             return ast_expresssion_parse(tokens, delimiters, arr_length(delimiters));
@@ -404,6 +532,8 @@ Ast ast_general_parse(Token** tokens) {
         case tt_ref:
         case tt_close_brace:
         case tt_close_paren:
+        case tt_dot:
+        case tt_mult:
         case tt_comma:
         case tt_dollar:
         case tt_equal:
@@ -454,6 +584,8 @@ i64 ast_get_precedence(Biop_Operator token_type) {
     switch (token_type) {
         case biop_operator_invalid:
             return INVALID_PRECEDENCE;
+        case biop_operator_multiply:
+            return 1;
     }
 }
 
@@ -589,12 +721,16 @@ Ast ast_value_parse(Token** tokens) {
             return ast_parenthesized_expression_parse(tokens);
         case tt_end_of_file:
         case tt_end_statement:
+        case tt_extern_c:
         case tt_dollar:
         case tt_close_brace:
         case tt_close_paren:
         case tt_ref:
+        case tt_struct:
+        case tt_mult:
         case tt_comma:
         case tt_equal:
+        case tt_dot:
         case tt_hash:
         case tt_close_bracket:
         case tt_open_bracket:
@@ -602,8 +738,8 @@ Ast ast_value_parse(Token** tokens) {
         case tt_return:
         case tt_invalid: {
             log_error_token(token, "Unexpected token can't parse as expression value");
-            char* token_type_name = token_get_string(token);
-            printf("token type is %s\n", token_type_name);
+            // char* token_type_name = token_get_string(token);
+            // printf("token type is %s\n", token_type_name);
             Ast err = {0};
             return err;
         }
@@ -628,6 +764,41 @@ static Ast _ast_expresssion_parse(Token** tokens, TokenType_* delimiters, u64 nu
             *tokens = token;
             return lhs;
         }
+        if (token->type == tt_dot) {
+            token++;
+            if (token->type != tt_identifier && token->type != tt_number) {
+                log_error_token(token, "Expected number or identifier after dot");
+                Ast err = {0};
+                return err;
+            }
+            char* identifier = token_get_string(token);
+            if (token->type == tt_number) {
+                bool error;
+                get_string_uint(identifier, &error);
+                if (error) {
+                    log_error_token(token, "Only numbers are allowed after dot are uints");
+                    Ast err = {0};
+                    return err;
+                }
+            }
+            token++;
+            if (token->type == tt_open_paren) {
+                // method call
+                massert(false, "not implemented");
+            }
+            Ast_Member_Access member_access = {0};
+            member_access.value = alloc(sizeof(Ast));
+            *member_access.value = lhs;
+            member_access.member_name = identifier;
+            Ast member_access_ast = {0};
+            member_access_ast.type = ast_member_access;
+            member_access_ast.token = lhs.token;
+            member_access_ast.num_tokens = token - member_access_ast.token;
+            member_access_ast.member_access = member_access;
+            lhs = member_access_ast;
+            continue;
+        }
+
         Biop_Operator operator = token_get_biop_operator(token);
         i64 operator_precedence = ast_get_precedence(operator);
         if (operator_precedence == INVALID_PRECEDENCE) {

@@ -1,0 +1,10 @@
+
+extern_c void* malloc(u64 size)
+
+struct heap{
+	i8 some_value_becuase_it_cant_be_empty
+}
+
+void* alloc(heap& allocator, type type_to_alloc){
+	return malloc(type_to_alloc.size)
+}

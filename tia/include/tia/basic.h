@@ -40,6 +40,7 @@ typedef double f64;
 
 typedef enum Biop_Operator {
     biop_operator_invalid = 0,
+    biop_operator_multiply,
 } Biop_Operator;
 
 void red_printf(const char* format, ...);
@@ -57,6 +58,8 @@ char* get_file_extension(const char* path);
 char* get_file_name(const char* path);
 
 u64 get_string_uint(const char* string, bool* out_error);
+
+u64 get_number_of_digits(u64 number);
 
 char** get_directory_in_directory(const char* path_, u64* out_count);
 

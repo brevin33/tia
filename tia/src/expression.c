@@ -19,17 +19,193 @@ Expression expression_create(Ast* ast, Scope* scope, Function_Instance* in_funct
             return expression_create_biop(ast, scope, in_function);
         case ast_function_call:
             return expression_create_function_call(ast, scope, in_function);
+        case ast_member_access:
+            return expression_create_member_access(ast, scope, in_function);
+        case ast_type:
+            return expression_create_type(ast, scope, in_function, true);
         case ast_variable_declaration:
         case ast_return:
+        case ast_struct_declaration:
         case ast_end_statement:
         case ast_assignment:
         case ast_scope:
         case ast_string:
         case ast_file:
         case ast_function_declaration:
-        case ast_type:
         case ast_invalid:
             massert(false, "unexpected expression");
+    }
+}
+
+Expression expression_access_struct_field(Expression* expression, u64 member_index) {
+    Type* expression_type = &expression->type;
+    Type_Type expression_type_type = type_get_type(expression_type);
+    if (expression_type->base->type != type_struct) {
+        log_error_ast(expression->ast, "Can't access struct field of non struct");
+        Expression err = {0};
+        return err;
+    }
+    // TODO: handle pointers and other levels of type modifiers
+    if (expression_type->modifiers.count != 0) {
+        if (expression_type->modifiers.count != 1) {
+            massert(false, "not implemented");
+        }
+        if (expression_type_type != type_ref) {
+            massert(false, "not implemented");
+        }
+    }
+
+    Expression expr;
+    expr.expr_type = et_struct_access;
+    expr.ast = expression->ast;
+    expr.struct_access.value = alloc(sizeof(Expression));
+    *expr.struct_access.value = *expression;
+    expr.struct_access.member_index = member_index;
+
+    Type_Struct_Field* field = type_struct_field_list_get(&expression_type->base->struct_.fields, member_index);
+    Type* field_type = &field->type;
+
+    if (expression_type_type == type_ref) {
+        expr.type = type_get_reference(field_type);
+    } else {
+        expr.type = *field_type;
+    }
+    return expr;
+}
+
+Expression expression_create_get_val(Ast* ast, Scope* scope, Function_Instance* in_function, Expression* value) {
+    Expression expression = {0};
+    expression.expr_type = et_get_val;
+    expression.ast = ast;
+    expression.get_val.expression = alloc(sizeof(Expression));
+    *expression.get_val.expression = *value;
+    expression.type = type_deref(&value->type);
+    return expression;
+}
+
+Expression expression_create_get_ptr(Ast* ast, Scope* scope, Function_Instance* in_function, Expression* value) {
+    Expression expression = {0};
+    expression.expr_type = et_get_ptr;
+    expression.ast = ast;
+    expression.get_ptr.expression = alloc(sizeof(Expression));
+    *expression.get_ptr.expression = *value;
+    Type underlying_type = type_underlying(&value->type);
+    expression.type = type_get_ptr(&underlying_type);
+    return expression;
+}
+
+Expression expression_create_struct_access(Ast* ast, Scope* scope, Function_Instance* in_function, Expression* value) {
+    massert(ast->type == ast_member_access, "ast is not ast_member_access");
+    Expression expression = {0};
+    expression.expr_type = et_struct_access;
+    expression.ast = ast;
+    Ast_Member_Access* member_access = &ast->member_access;
+    expression.struct_access.value = alloc(sizeof(Expression));
+    *expression.struct_access.value = *value;
+
+    Type* value_type = &expression.struct_access.value->type;
+    Type_Type value_type_type = type_get_type(value_type);
+    Type_Type value_type_type_base = value_type->base->type;
+    if (value_type_type_base != type_struct) {
+        log_error_ast(ast->member_access.value, "Can't access struct member of non struct");
+        Expression err = {0};
+        return err;
+    }
+
+    // TODO: handel pointers and other levels of type modifiers
+    if (value_type->modifiers.count != 0) {
+        if (value_type->modifiers.count != 1) {
+            massert(false, "not implemented");
+        }
+        if (value_type_type != type_ref) {
+            massert(false, "not implemented");
+        }
+    }
+
+    char* member_name = member_access->member_name;
+    bool error;
+    u64 number = get_string_uint(member_name, &error);
+    if (error) {
+        for (u64 i = 0; i < value_type->base->struct_.fields.count; i++) {
+            Type_Struct_Field* field = type_struct_field_list_get(&value_type->base->struct_.fields, i);
+            if (strcmp(field->name, member_name) == 0) {
+                number = i;
+                break;
+            }
+        }
+    } else {
+        if (number >= value_type->base->struct_.fields.count) {
+            log_error_ast(ast->member_access.value, "No struct element of %llu", number);
+            Expression err = {0};
+            return err;
+        }
+    }
+    expression.struct_access.member_index = number;
+
+    Type_Struct_Field* field = type_struct_field_list_get(&value_type->base->struct_.fields, number);
+    Type* field_type = &field->type;
+
+    Type accessed_type;
+    if (value_type_type == type_ref) {
+        accessed_type = type_get_reference(field_type);
+    } else {
+        accessed_type = *field_type;
+    }
+    expression.type = accessed_type;
+
+    return expression;
+}
+
+Expression expression_create_get_type_size(Ast* ast, Scope* scope, Function_Instance* in_function, Expression* value) {
+    Type_Type value_type_type = type_get_type(&value->type);
+    if (value_type_type != type_compile_time_type) {
+        log_error_ast(ast, "Can't get size of non compile time type");
+        Expression err = {0};
+        return err;
+    }
+
+    Expression expression = {0};
+    expression.expr_type = et_get_type_size;
+    expression.ast = ast;
+    expression.get_type_size.expression = alloc(sizeof(Expression));
+    *expression.get_type_size.expression = *value;
+    expression.type = type_get_number_literal_type();
+    return expression;
+}
+
+Expression expression_create_member_access(Ast* ast, Scope* scope, Function_Instance* in_function) {
+    char* member_name = ast->member_access.member_name;
+
+    massert(ast->type == ast_member_access, "ast is not ast_member_access");
+    Expression value = expression_create(ast->member_access.value, scope, in_function);
+    if (value.expr_type == et_invalid) return value;
+    Type* value_type = &value.type;
+    Type_Type value_type_type = type_get_type(value_type);
+    Type_Type value_type_type_base = value_type->base->type;
+
+    if (strcmp(member_name, "ptr") == 0 && value_type_type == type_ref) {
+        return expression_create_get_ptr(ast, scope, in_function, &value);
+    } else if (strcmp(member_name, "val") == 0 && value_type_type == type_ptr) {
+        return expression_create_get_val(ast, scope, in_function, &value);
+    }
+    if (value_type_type == type_ref) {
+        Type underlying_type = type_underlying(value_type);
+        Type_Type underlying_type_type = type_get_type(&underlying_type);
+        if (strcmp(member_name, "val") == 0 && underlying_type_type == type_ptr) {
+            Expression deref = expression_cast(&value, &underlying_type);
+            return expression_create_get_val(ast, scope, in_function, &deref);
+        }
+    }
+
+    if (value_type_type == type_compile_time_type) {
+        return expression_create_get_type_size(ast, scope, in_function, &value);
+    }
+    if (value_type_type_base == type_struct) {
+        return expression_create_struct_access(ast, scope, in_function, &value);
+    } else {
+        log_error_ast(ast->member_access.value, "No member to access with name %s", ast->member_access.member_name);
+        Expression err = {0};
+        return err;
     }
 }
 
@@ -40,23 +216,20 @@ Expression expression_create_function_call(Ast* ast, Scope* scope, Function_Inst
     expression.ast = ast;
     char* function_name = ast->function_call.function_name;
     Expression_List arguments = expression_list_create(ast->function_call.arguments.count);
-    Type_List parameter_types = type_list_create(ast->function_call.arguments.count);
     for (u64 i = 0; i < ast->function_call.arguments.count; i++) {
         Ast* argument_ast = ast_list_get(&ast->function_call.arguments, i);
         Expression argument = expression_create(argument_ast, scope, in_function);
         if (argument.expr_type == et_invalid) return argument;
         expression_list_add(&arguments, &argument);
-        Type* argument_type = &argument.type;
-        type_list_add(&parameter_types, argument_type);
     }
 
-    Function_Instance* function_instance = function_find(&parameter_types, function_name, ast, true);
+    Function_Instance* function_instance = function_find(&arguments, function_name, ast, true);
     if (function_instance == NULL) {
         Expression err = {0};
         return err;
     }
     expression.function_call.function_instance = function_instance;
-    for (u64 i = 0; i < ast->function_call.arguments.count; i++) {
+    for (u64 i = 0; i < arguments.count; i++) {
         Expression* argument = expression_list_get(&arguments, i);
         Type* parameter_type = &function_instance->type.base->function.parameters.data[i];
         Expression argument_cast = expression_implicitly_cast(argument, parameter_type);
@@ -68,13 +241,39 @@ Expression expression_create_function_call(Ast* ast, Scope* scope, Function_Inst
     return expression;
 }
 
-Expression expression_create_variable(Ast* ast, Scope* scope, Function_Instance* in_function) {
+Expression expression_variable_access(Variable* variable) {
+    Expression expression = {0};
+    expression.expr_type = et_variable;
+    expression.ast = NULL;
+    expression.variable.variable = variable;
+    Type_Type var_type_type = type_get_type(&variable->type);
+    if (var_type_type != type_ref) {
+        Type ref_type = type_get_reference(&variable->type);
+        expression.type = ref_type;
+    } else {
+        expression.type = variable->type;
+    }
+    return expression;
+}
+
+Expression expression_create_type(Ast* ast, Scope* scope, Function_Instance* in_function, bool log_error) {
+    Expression expression = {0};
+    expression.expr_type = et_type;
+    expression.ast = ast;
+    expression.type_info.type = type_find_ast(ast, scope, log_error);
+    expression.type = type_get_compile_time_type(NULL);
+    return expression;
+}
+
+Expression expression_create_variable(Ast* ast, Scope* scope, Function_Instance* in_function, bool log_error) {
     Expression expression = {0};
     expression.expr_type = et_variable;
     expression.ast = ast;
     Variable* variable = scope_get_variable(scope, ast->word.word);
     if (variable == NULL) {
-        log_error_ast(ast, "Variable %s not found", ast->word.word);
+        if (log_error) {
+            log_error_ast(ast, "Variable %s not found", ast->word.word);
+        }
         Expression err = {0};
         return err;
     }
@@ -89,12 +288,39 @@ Expression expression_create_variable(Ast* ast, Scope* scope, Function_Instance*
     return expression;
 }
 
-Expression expression_create_biop(Ast* ast, Scope* scope, Function_Instance* in_function) {
-    massert(false, "not implemented");
+Expression expression_create_word(Ast* ast, Scope* scope, Function_Instance* in_function) {
+    Expression expression = expression_create_variable(ast, scope, in_function, false);
+    if (expression.expr_type != et_invalid) {
+        return expression;
+    }
+
+    // convert as word to ast type
+    Ast type_ast = {0};
+    type_ast.type = ast_type;
+    type_ast.token = ast->token;
+    type_ast.num_tokens = ast->num_tokens;
+    type_ast.type_info.is_compile_time_type = false;
+    type_ast.type_info.name = ast->word.word;
+    type_ast.type_info.modifiers = type_modifier_list_create(0);
+
+    Ast* type_ast_ptr = alloc(sizeof(Ast));
+    *type_ast_ptr = type_ast;
+
+    expression = expression_create_type(type_ast_ptr, scope, in_function, false);
+    if (expression.expr_type != et_invalid) {
+        return expression;
+    }
+
+    // call both again to show both errors
+    expression_create_variable(ast, scope, in_function, true);
+    expression_create_type(type_ast_ptr, scope, in_function, true);
+
+    Expression err = {0};
+    return err;
 }
 
-Expression expression_create_word(Ast* ast, Scope* scope, Function_Instance* in_function) {
-    return expression_create_variable(ast, scope, in_function);
+Expression expression_create_biop(Ast* ast, Scope* scope, Function_Instance* in_function) {
+    massert(false, "not implemented");
 }
 
 Expression expression_create_multi_expression(Ast* ast, Scope* scope, Function_Instance* in_function) {
@@ -149,9 +375,15 @@ bool expression_can_implicitly_cast_without_deref(Type* expression, Type* type) 
     if (type_is_equal(expression, type)) return true;
 
     Type_Type expression_type_type = type_get_type(expression);
+    // Type_Type expression_type_type_base = expression->base->type;
     Type_Type type_type = type_get_type(type);
+    // Type_Type type_type_base = type->base->type;
+    // Type type_underlying_type = type_underlying(type);
 
     if (expression_type_type == type_number_literal && type_type == type_int) {
+        return true;
+    }
+    if (expression_type_type == type_number_literal && type_type == type_uint) {
         return true;
     }
     if (expression_type_type == type_number_literal && type_type == type_float) {
@@ -182,6 +414,14 @@ bool expression_can_implicitly_cast_without_deref(Type* expression, Type* type) 
             return true;
         } else {
             return false;
+        }
+    }
+
+    if (expression_type_type == type_ptr) {
+        Type expression_type_underlying_type = type_underlying(expression);
+        Type_Type expression_type_underlying_type_type = type_get_type(&expression_type_underlying_type);
+        if (expression_type_underlying_type_type == type_void && type_type == type_ptr) {
+            return true;
         }
     }
 
@@ -226,8 +466,50 @@ Expression expression_implicitly_cast(Expression* expression, Type* type) {
     return err;
 }
 
+LLVMValueRef expression_compile_get_val(Expression* expression, Function_Instance* func, Scope* scope) {
+    return expression_compile(expression->get_val.expression, func, scope);
+}
+
+LLVMValueRef expression_compile_get_ptr(Expression* expression, Function_Instance* func, Scope* scope) {
+    return expression_compile(expression->get_ptr.expression, func, scope);
+}
+
+LLVMValueRef expression_compile_struct_access(Expression* expression, Function_Instance* func, Scope* scope) {
+    massert(expression->expr_type == et_struct_access, "expression is not et_struct_access");
+    Expression_Struct_Access* struct_access = &expression->struct_access;
+    LLVMValueRef value = expression_compile(struct_access->value, func, scope);
+
+    Expression* value_expression = expression->struct_access.value;
+    Type* value_type = &value_expression->type;
+    Type_Type value_type_type = type_get_type(value_type);
+    Type_Base* value_type_base = value_type->base;
+    LLVMTypeRef struct_llvm_type = type_get_base_llvm_type(value_type_base);
+
+    if (value_type_type == type_ref && value_type->modifiers.count == 1) {
+        LLVMValueRef accessed_value = LLVMBuildStructGEP2(context.llvm_info.builder, struct_llvm_type, value, struct_access->member_index, "struct_access");
+        return accessed_value;
+    } else if (value_type_type == type_struct) {
+        LLVMValueRef accessed_value = LLVMBuildExtractValue(context.llvm_info.builder, value, struct_access->member_index, "struct_access");
+        return accessed_value;
+    } else {
+        massert(false, "should never happen");
+    }
+}
+
+LLVMValueRef expression_compile_type(Expression* expression, Function_Instance* func, Scope* scope) {
+    return NULL;
+}
+
 LLVMValueRef expression_compile(Expression* expression, Function_Instance* func, Scope* scope) {
     switch (expression->expr_type) {
+        case et_type:
+            return expression_compile_type(expression, func, scope);
+        case et_get_val:
+            return expression_compile_get_val(expression, func, scope);
+        case et_get_ptr:
+            return expression_compile_get_ptr(expression, func, scope);
+        case et_struct_access:
+            return expression_compile_struct_access(expression, func, scope);
         case et_number_literal:
             return expression_compile_number_literal(expression, func, scope);
         case et_variable:
@@ -241,6 +523,8 @@ LLVMValueRef expression_compile(Expression* expression, Function_Instance* func,
             return expression_compile_cast(expression, func, scope);
         case et_function_call:
             return expression_compile_function_call(expression, func, scope);
+        case et_get_type_size:
+            return expression_compile_get_type_size(expression, func, scope);
         case et_invalid:
             massert(false, "unexpected expression");
             return NULL;
@@ -278,6 +562,11 @@ LLVMValueRef expression_compile_function_call(Expression* expression, Function_I
 
     LLVMValueRef result = LLVMBuildCall2(context.llvm_info.builder, function_type, function_value, argument_values.data, argument_values.count, "call");
     return result;
+}
+
+LLVMValueRef expression_compile_get_type_size(Expression* expression, Function_Instance* func, Scope* scope) {
+    // do nothing
+    return NULL;
 }
 
 LLVMValueRef expression_compile_number_literal(Expression* expression, Function_Instance* func, Scope* scope) {
@@ -369,7 +658,27 @@ LLVMValueRef expression_compile_cast(Expression* expression, Function_Instance* 
     if (from_type_type == type_uint && to_type_type == type_float) {
         return LLVMBuildUIToFP(context.llvm_info.builder, from_value, to_type_llvm, "uint_to_float");
     }
+
+    if (from_type_type == type_ptr && to_type_type == type_ptr) {
+        return LLVMBuildBitCast(context.llvm_info.builder, from_value, to_type_llvm, "ptr_cast");
+    }
+
     massert(false, "not implemented");
+}
+
+Expression_Number_Literal expression_get_type_size_number_literal(Expression* expression) {
+    Expression_Number_Literal number = {0};
+    number.is_float = false;
+    Expression* type_expression = expression->get_type_size.expression;
+    massert(type_expression->expr_type == et_type, "type_expression is not et_type");
+    Type type = type_expression->type_info.type;
+    LLVMTypeRef type_llvm = type_get_llvm_type(&type);
+    size_t size = LLVMABISizeOfType(context.llvm_info.data_layout, type_llvm);
+    u64 number_of_digits = get_number_of_digits(size);
+    char* number_string = alloc(number_of_digits + 1);
+    sprintf(number_string, "%llu", size);
+    number.number = number_string;
+    return number;
 }
 
 Expression_Number_Literal expression_get_number_literal_number_literal(Expression* expression) {
@@ -390,7 +699,13 @@ Expression_Number_Literal expression_get_number_literal(Expression* expression) 
             massert(false, "not implemented");
         case et_number_literal:
             return expression_get_number_literal_number_literal(expression);
+        case et_get_type_size:
+            return expression_get_type_size_number_literal(expression);
         case et_function_call:
+        case et_type:
+        case et_get_val:
+        case et_get_ptr:
+        case et_struct_access:
         case et_variable:
         case et_multi_expression:
         case et_cast:

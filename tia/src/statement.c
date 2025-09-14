@@ -7,6 +7,7 @@ Statement statement_create(Ast* ast, Scope* scope, Function_Instance* function) 
         case ast_string:
         case ast_number:
         case ast_biop:
+        case ast_member_access:
         case ast_function_call:
         case ast_multi_expression:
             return statement_create_expression(ast, scope, function);
@@ -19,6 +20,7 @@ Statement statement_create(Ast* ast, Scope* scope, Function_Instance* function) 
         case ast_assignment:
             return statement_create_assignment(ast, scope, function);
         case ast_variable_declaration:
+        case ast_struct_declaration:
         case ast_file:
         case ast_function_declaration:
         case ast_invalid: {
@@ -43,7 +45,7 @@ Statement statement_create_assignment(Ast* ast, Scope* scope, Function_Instance*
             char* variable_name = variable_declaration->name;
             Variable variable = {0};
             variable.name = variable_name;
-            variable.type = type_find_ast(variable_declaration->type, &function->template_to_type, true);
+            variable.type = type_find_ast(variable_declaration->type, scope, true);
             Variable* in_list_variable = scope_add_variable(scope, &variable);
             if (in_list_variable == NULL) {
                 log_error_ast(assignee_ast->variable_declaration, "Already declared variable with name %s", variable_name);
@@ -83,17 +85,58 @@ Statement statement_create_assignment(Ast* ast, Scope* scope, Function_Instance*
         if (value.expr_type == et_multi_expression) {
             Expression_Multi_Expression* multi_expression = &value.multi_expression;
             if (multi_expression->expressions.count != assignees.count) {
-                u64 values_count = multi_expression->expressions.count;
-                u64 assignees_count = assignees.count;
-                log_error_ast(ast, "Can't assign %llu values to %llu variables", values_count, assignees_count);
-                Statement err = {0};
-                return err;
+                if (assignees.count == 1) {
+                    Assignee assignee = *assignees_list_get(&assignees, 0);
+                    Type assignee_type = *statement_get_assignee_type(&assignee);
+                    Type_Type assignee_type_type_base = assignee_type.base->type;
+                    if (assignee_type_type_base == type_struct) {
+                        Type_Struct* struct_type = &assignee_type.base->struct_;
+                        if (multi_expression->expressions.count != struct_type->fields.count) {
+                            u64 values_count = multi_expression->expressions.count;
+                            u64 assignees_count = struct_type->fields.count;
+                            log_error_ast(ast, "Can't assign %llu values to %llu struct fields", values_count, assignees_count);
+                            Statement err = {0};
+                            return err;
+                        }
+
+                        // modify the assignee list to now me access to each of the fields
+                        assignees.count = 0;
+                        Expression old_assignee_expression;
+                        if (assignee.is_variable_declaration) {
+                            Variable* variable = assignee.variable;
+                            old_assignee_expression = expression_variable_access(variable);
+                        } else {
+                            old_assignee_expression = *assignee.expression;
+                        }
+
+                        for (u64 i = 0; i < struct_type->fields.count; i++) {
+                            Assignee field_assignee = {0};
+                            Expression field_access = expression_access_struct_field(&old_assignee_expression, i);
+                            field_assignee.is_variable_declaration = false;
+                            field_assignee.expression = alloc(sizeof(Expression));
+                            *field_assignee.expression = field_access;
+                            assignees_list_add(&assignees, &field_assignee);
+                        }
+                    }
+                } else {
+                    u64 values_count = multi_expression->expressions.count;
+                    u64 assignees_count = assignees.count;
+                    log_error_ast(ast, "Can't assign %llu values to %llu variables", values_count, assignees_count);
+                    Statement err = {0};
+                    return err;
+                }
             }
             for (u64 i = 0; i < multi_expression->expressions.count; i++) {
                 Expression* value = &multi_expression->expressions.data[i];
                 Assignee* assignee = assignees_list_get(&assignees, i);
                 Type assignee_type = *statement_get_assignee_type(assignee);
                 if (assignee->is_variable_declaration) {
+                    Variable* variable = assignee->variable;
+                    if (assignee_type.base->type == type_compile_time_type) {
+                        massert(value->expr_type == et_type, "value is not et_type");
+                        Type* template_type = &value->type_info.type;
+                        scope_add_template(scope, variable->name, template_type);
+                    }
                 } else {
                     Type deref_type = type_deref(&assignee_type);
                     assignee_type = deref_type;
@@ -117,6 +160,12 @@ Statement statement_create_assignment(Ast* ast, Scope* scope, Function_Instance*
             Assignee* assignee = assignees_list_get(&assignees, 0);
             Type assignee_type = *statement_get_assignee_type(assignees_list_get(&assignees, 0));
             if (assignee->is_variable_declaration) {
+                Variable* variable = assignee->variable;
+                if (assignee_type.base->type == type_compile_time_type) {
+                    massert(value.expr_type == et_type, "value is not et_type");
+                    Type* template_type = &value.type_info.type;
+                    scope_add_template(scope, variable->name, template_type);
+                }
             } else {
                 Type deref_type = type_deref(&assignee_type);
                 assignee_type = deref_type;
@@ -252,6 +301,9 @@ bool statement_compile_assignment(Statement* statement, Function_Instance* func,
             assignee_values[i] = expression_compile(expression, func, scope);
         }
     }
+    if (statement->assignment.value == NULL) {
+        return false;
+    }
     LLVMValueRef llvmvalue = expression_compile(statement->assignment.value, func, scope);
 
     if (statement->assignment.assignees.count == 1) {
@@ -265,11 +317,15 @@ bool statement_compile_assignment(Statement* statement, Function_Instance* func,
                 variable->value = value;
             } else {
                 LLVMValueRef variable_value = variable->value;
-                LLVMBuildStore(context.llvm_info.builder, value, variable_value);
+                if (value != NULL) {
+                    LLVMBuildStore(context.llvm_info.builder, value, variable_value);
+                }
             }
         } else {
             LLVMValueRef assignee_value = assignee_values[0];
-            LLVMBuildStore(context.llvm_info.builder, value, assignee_value);
+            if (value != NULL) {
+                LLVMBuildStore(context.llvm_info.builder, value, assignee_value);
+            }
         }
     } else {
         Expression* value_expression = statement->assignment.value;
@@ -290,12 +346,16 @@ bool statement_compile_assignment(Statement* statement, Function_Instance* func,
                     variable->value = multi_value[i];
                 } else {
                     LLVMValueRef variable_value = variable->value;
-                    LLVMBuildStore(context.llvm_info.builder, multi_value[i], variable_value);
+                    if (multi_value[i] != NULL) {
+                        LLVMBuildStore(context.llvm_info.builder, multi_value[i], variable_value);
+                    }
                 }
             } else {
                 LLVMValueRef assignee_value = assignee_values[i];
                 LLVMValueRef expression_value = multi_value[i];
-                LLVMBuildStore(context.llvm_info.builder, expression_value, assignee_value);
+                if (multi_value[i] != NULL) {
+                    LLVMBuildStore(context.llvm_info.builder, expression_value, assignee_value);
+                }
             }
         }
     }

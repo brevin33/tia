@@ -77,6 +77,12 @@ void token_swap_if_keyword(Token* token) {
     if (strcmp(string, "return") == 0) {
         token->type = tt_return;
     }
+    if (strcmp(string, "struct") == 0) {
+        token->type = tt_struct;
+    }
+    if (strcmp(string, "extern_c") == 0) {
+        token->type = tt_extern_c;
+    }
 }
 
 Token_List token_get_tokens(File* file) {
@@ -197,6 +203,16 @@ Token_List token_get_tokens(File* file) {
                 token.type = tt_hash;
                 break;
             }
+            case '.': {
+                index++;
+                token.type = tt_dot;
+                break;
+            }
+            case '*': {
+                index++;
+                token.type = tt_mult;
+                break;
+            }
             default: {
                 index++;
                 token.type = tt_invalid;
@@ -229,7 +245,11 @@ bool token_causes_endline_to_be_endstatement(Token* token) {
         case tt_close_bracket:
             return true;
         case tt_dollar:
+        case tt_mult:
+        case tt_extern_c:
+        case tt_dot:
         case tt_hash:
+        case tt_struct:
         case tt_ref:
         case tt_end_statement:
         case tt_end_of_file:
@@ -244,6 +264,8 @@ bool token_causes_endline_to_be_endstatement(Token* token) {
 
 Biop_Operator token_get_biop_operator(Token* token) {
     switch (token->type) {
+        case tt_mult:
+            return biop_operator_multiply;
         default:
             return biop_operator_invalid;
     }

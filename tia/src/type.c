@@ -1,4 +1,5 @@
 #include "tia.h"
+#include "tia/lists.h"
 
 void init_types() {
     // need to kickstart with invalid type so cant call type_base_new with it
@@ -18,6 +19,7 @@ void init_types() {
     type_base_new(type_number_literal, "$Number_Literal$", NULL);
     type_base_new(type_void, "void", NULL);
     type_base_new(type_template, "$Template$", NULL);
+    type_base_new(type_compile_time_type, "type", NULL);
 }
 
 Type_Base* type_base_new(Type_Type type, const char* name, Ast* ast) {
@@ -197,10 +199,25 @@ Type_Base* type_find_base_type(const char* name) {
 //     return type;
 // }
 
-Type type_find_ast(Ast* ast, Template_To_Type* template_to_type, bool log_error) {
+Type type_find_ast(Ast* ast, Scope* scope, bool log_error) {
     massert(ast->type == ast_type, "ast is not ast_type");
+    char* name = ast->type_info.name;
+
+    if (scope != NULL) {
+        Type* templated_type = scope_get_templated_type(scope, name);
+        if (templated_type != NULL) {
+            return *templated_type;
+        }
+    }
+
     Type_Base* type_base;
     if (ast->type_info.is_compile_time_type) {
+        // special compile time types
+        if (strcmp(name, "type") == 0) {
+            return type_get_compile_time_type(ast);
+        }
+
+        // default templating
         type_base = type_get_template_type_base();
     } else {
         type_base = type_find_base_type_ast(ast);
@@ -216,9 +233,6 @@ Type type_find_ast(Ast* ast, Template_To_Type* template_to_type, bool log_error)
     type.modifiers = ast->type_info.modifiers;
     type.base = type_base;
 
-    if (template_to_type != NULL) {
-        return type_get_mapped_type(template_to_type, &type);
-    }
     return type;
 }
 
@@ -244,6 +258,18 @@ Type type_get_function_type(Type_List* parameters, Type return_type) {
 
 Type_Base* type_get_template_type_base() {
     return type_find_base_type("$Template$");
+}
+
+Type_Base* type_get_compile_time_type_base() {
+    return type_find_base_type("type");
+}
+
+Type type_get_compile_time_type(Ast* ast) {
+    Type_Base* type_base = type_get_compile_time_type_base();
+    Type type = {0};
+    type.base = type_base;
+    type.ast = ast;
+    return type;
 }
 
 Type type_get_template_type(Ast* ast) {
@@ -278,6 +304,66 @@ Type_Base* type_get_multi_value_type_base(Type_List* types) {
     return type_base;
 }
 
+Type_Base* type_get_struct_type_base(Type_List* types, String_List* names, char* name) {
+    Type_Base* existing_type = type_find_base_type(name);
+    if (!type_base_is_invalid(existing_type)) {
+        return existing_type;
+    }
+
+    Type_Base* type_base = type_base_new(type_struct, name, NULL);
+    massert(type_base != NULL, "type_base_new failed");
+
+    Type_Struct_Field_List fields = type_struct_field_list_create(types->count);
+    for (u64 i = 0; i < types->count; i++) {
+        Type* type = type_list_get(types, i);
+        Type_Struct_Field field = {0};
+        field.name = string_list_get_string(names, i);
+        field.type = *type;
+        type_struct_field_list_add(&fields, &field);
+    }
+    type_base->struct_.fields = fields;
+    return type_base;
+}
+
+Type type_get_struct_type(Type_List* types, String_List* names, char* name) {
+    Type_Base* type_base = type_get_struct_type_base(types, names, name);
+    Type type = {0};
+    type.base = type_base;
+    type.ast = NULL;
+    return type;
+}
+
+Type_Base* type_prototype_struct(Ast* ast) {
+    massert(ast->type == ast_struct_declaration, "ast is not ast_struct_declaration");
+
+    return type_base_new(type_struct, ast->struct_declaration.name, ast);
+}
+
+void type_implement_struct(Type_Base* base) {
+    Ast* ast = base->ast;
+    base->struct_.fields = type_struct_field_list_create(ast->struct_declaration.fields.count);
+    for (u64 i = 0; i < ast->struct_declaration.fields.count; i++) {
+        Ast* field = ast_list_get(&ast->struct_declaration.fields, i);
+        massert(field->type == ast_variable_declaration, "field is not ast_variable_declaration");
+        Type_Struct_Field struct_field = {0};
+        struct_field.name = field->variable_declaration.name;
+        struct_field.type = type_find_ast(field->variable_declaration.type, NULL, true);
+        if (struct_field.type.base->type == type_invalid) {
+            // do nothing
+        }
+
+        for (u64 i = 0; i < base->struct_.fields.count; i++) {
+            Type_Struct_Field* existing_field = type_struct_field_list_get(&base->struct_.fields, i);
+            char* existing_field_name = existing_field->name;
+            if (strcmp(existing_field_name, struct_field.name) == 0) {
+                log_error_ast(field, "Field %s already exists", existing_field_name);
+            }
+        }
+
+        type_struct_field_list_add(&base->struct_.fields, &struct_field);
+    }
+}
+
 Type type_get_multi_value_type(Type_List* types) {
     Type_Base* type_base = type_get_multi_value_type_base(types);
     Type type = {0};
@@ -307,7 +393,10 @@ char* type_get_name(Type* type) {
             case type_modifier_ref:
                 len += 1;
                 break;
-            default:
+            case type_modifier_ptr:
+                len += 1;
+                break;
+            case type_modifier_invalid:
                 break;
         }
     }
@@ -321,11 +410,58 @@ char* type_get_name(Type* type) {
                 count++;
                 break;
             }
-            default:
+            case type_modifier_ptr: {
+                name[count] = '*';
+                count++;
+                break;
+            }
+            case type_modifier_invalid:
                 break;
         }
     }
     name[count] = '\0';
+    return name;
+}
+
+char* type_get_struct_name(const char* last_name, Template_To_Type* template_to_type) {
+    u64 last_name_len = strlen(last_name);
+    u64 len = strlen(last_name) + 2;
+    for (u64 i = 0; i < template_to_type->templates.count; i++) {
+        Template_Map* template_map = template_map_list_get(&template_to_type->templates, i);
+        char* template_name = template_map->name;
+        u64 template_name_len = strlen(template_name);
+        len += template_name_len + 1;
+        Type* template_type = &template_map->type;
+        char* template_type_name = type_get_name(template_type);
+        u64 template_type_name_len = strlen(template_type_name);
+        len += template_type_name_len + 1;
+    }
+    char* name = alloc(len + 1);
+    u64 index = 0;
+    memcpy(name, last_name, last_name_len);
+    name[last_name_len] = '(';
+    index += last_name_len + 1;
+    for (u64 i = 0; i < template_to_type->templates.count; i++) {
+        Template_Map* template_map = template_map_list_get(&template_to_type->templates, i);
+        char* template_name = template_map->name;
+        u64 template_name_len = strlen(template_name);
+        memcpy(name + index, template_name, template_name_len);
+        index += template_name_len;
+        name[index] = '=';
+        index++;
+        Type* template_type = &template_map->type;
+        char* template_type_name = type_get_name(template_type);
+        u64 template_type_name_len = strlen(template_type_name);
+        memcpy(name + index, template_type_name, template_type_name_len);
+        index += template_type_name_len;
+        if (i < template_to_type->templates.count - 1) {
+            name[index] = ',';
+            index++;
+        }
+    }
+    name[index] = ')';
+    index++;
+    name[index] = '\0';
     return name;
 }
 
@@ -405,6 +541,8 @@ Type_Type type_get_type(Type* type) {
         switch (last_modifier->type) {
             case type_modifier_ref:
                 return type_ref;
+            case type_modifier_ptr:
+                return type_ptr;
             case type_modifier_invalid:
                 return type_invalid;
         }
@@ -414,16 +552,32 @@ Type_Type type_get_type(Type* type) {
 
 Type type_deref(Type* type) {  // pointer go to references
     Type_Type type_type = type_get_type(type);
-    massert(type_type == type_ref, "type is not type_ref");
     switch (type_type) {
         case type_ref: {
-            Type deref_type = *type;
+            Type deref_type = type_copy(type);
             deref_type.modifiers.count--;
             Type_Type deref_type_type = type_get_type(&deref_type);
             massert(deref_type_type != type_ref, "type is type_ref after deref");
             return deref_type;
         }
-        default:
+        case type_ptr: {
+            Type deref_type = type_copy(type);
+            Type_Modifier* last_modifier = type_modifier_list_get(&deref_type.modifiers, deref_type.modifiers.count - 1);
+            last_modifier->type = type_modifier_ref;
+            return deref_type;
+        }
+        case type_invalid:
+        case type_number_literal:
+        case type_void:
+        case type_compile_time_type:
+        case type_function:
+        case type_multi_value:
+        case type_template:
+        case type_struct:
+        case type_int:
+        case type_float:
+        case type_uint:
+            massert(false, "unexpected type");
             return type_get_invalid_type();
     }
 }
@@ -437,9 +591,114 @@ void type_add_mapping(Template_To_Type* template_to_type, const char* name, Type
     template_map_list_add(&template_to_type->templates, &template_map);
 }
 
-Type type_get_mapped_type(Template_To_Type* template_to_type, Type* type) {
+bool type_needs_mapped(Template_To_Type* template_to_type, Type* type) {
     Type_Type type_type = type_get_type(type);
     switch (type_type) {
+        case type_struct: {
+            Type_Struct* struct_ = &type->base->struct_;
+            for (u64 i = 0; i < struct_->fields.count; i++) {
+                Type_Struct_Field* field = type_struct_field_list_get(&struct_->fields, i);
+                Type* field_type = &field->type;
+                if (type_needs_mapped(template_to_type, field_type)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        case type_ptr:
+        case type_ref: {
+            Type deref_type = type_deref(type);
+            return type_needs_mapped(template_to_type, &deref_type);
+        }
+        case type_multi_value: {
+            Type_List* types = &type->base->multi_value.types;
+            for (u64 i = 0; i < types->count; i++) {
+                Type* type = type_list_get(types, i);
+                if (type_needs_mapped(template_to_type, type)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        case type_function: {
+            Type return_type = type->base->function.return_type;
+            if (type_needs_mapped(template_to_type, &return_type)) {
+                return true;
+            }
+            Type_List* parameters = &type->base->function.parameters;
+            for (u64 i = 0; i < parameters->count; i++) {
+                Type* parameter = type_list_get(parameters, i);
+                if (type_needs_mapped(template_to_type, parameter)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        case type_invalid:
+        case type_int:
+        case type_float:
+        case type_compile_time_type:
+        case type_uint:
+        case type_number_literal:
+        case type_void:
+            return false;
+        case type_template:
+            return true;
+    }
+}
+
+Template_To_Type copy_template_to_type(Template_To_Type* template_to_type) {
+    Template_To_Type template_to_type_copy = {0};
+    for (u64 i = 0; i < template_to_type->templates.count; i++) {
+        Template_Map* template_map = template_map_list_get(&template_to_type->templates, i);
+        Template_Map template_map_copy;
+        template_map_copy.name = template_map->name;
+        template_map_copy.type = type_copy(&template_map->type);
+        template_map_list_add(&template_to_type_copy.templates, &template_map_copy);
+    }
+    return template_to_type_copy;
+}
+
+Type type_copy(Type* type) {
+    Type type_copy = *type;
+    type_copy.modifiers = type_modifier_list_create(type->modifiers.count);
+    for (u64 i = 0; i < type->modifiers.count; i++) {
+        Type_Modifier* modifier = type_modifier_list_get(&type->modifiers, i);
+        Type_Modifier modifier_copy = *modifier;
+        type_modifier_list_add(&type_copy.modifiers, &modifier_copy);
+    }
+    return type_copy;
+}
+
+Type type_get_ptr(Type* type) {
+    Type copy = type_copy(type);
+    Type_Modifier ptr = {0};
+    ptr.type = type_modifier_ptr;
+    type_modifier_list_add(&copy.modifiers, &ptr);
+    return copy;
+}
+
+Type type_get_mapped_type(Template_To_Type* template_to_type, Type* type) {
+    if (!type_needs_mapped(template_to_type, type)) {
+        return *type;
+    }
+    Type_Type type_type = type_get_type(type);
+    switch (type_type) {
+        case type_struct: {
+            Type_Struct* struct_ = &type->base->struct_;
+            Type_List new_type_list = type_list_create(struct_->fields.count);
+            String_List new_type_names = string_list_create(struct_->fields.count);
+            for (u64 i = 0; i < struct_->fields.count; i++) {
+                Type_Struct_Field* field = type_struct_field_list_get(&struct_->fields, i);
+                Type* field_type = &field->type;
+                Type field_type_mapped = type_get_mapped_type(template_to_type, field_type);
+                char* field_name = field->name;
+                type_list_add(&new_type_list, &field_type_mapped);
+                string_list_add(&new_type_names, field_name);
+            }
+            char* new_name = type_get_struct_name(type->base->name, template_to_type);
+            return type_get_struct_type(&new_type_list, &new_type_names, new_name);
+        }
         case type_template: {
             const char* name = type_get_template_base_name(type);
             Type* to_map_to = type_get_mapping(template_to_type, name);
@@ -448,6 +707,11 @@ Type type_get_mapped_type(Template_To_Type* template_to_type, Type* type) {
                 return type_get_invalid_type();
             }
             return *to_map_to;
+        }
+        case type_ptr: {
+            Type deref_type = type_deref(type);
+            Type deref_mapped_type = type_get_mapped_type(template_to_type, &deref_type);
+            return type_get_ptr(&deref_mapped_type);
         }
         case type_ref: {
             Type deref_type = type_deref(type);
@@ -478,6 +742,7 @@ Type type_get_mapped_type(Template_To_Type* template_to_type, Type* type) {
         }
         case type_invalid:
         case type_int:
+        case type_compile_time_type:
         case type_float:
         case type_uint:
         case type_void:
@@ -516,23 +781,34 @@ bool type_mapping_equal(Template_To_Type* template_to_type, Template_To_Type* ot
 }
 
 Type type_get_reference(Type* type) {
-    Type type_copy = *type;
+    Type copy = type_copy(type);
     Type_Modifier ref = {0};
     ref.type = type_modifier_ref;
-    type_modifier_list_add(&type_copy.modifiers, &ref);
-    return type_copy;
+    type_modifier_list_add(&copy.modifiers, &ref);
+    return copy;
 }
 
 Type type_underlying(Type* type) {  // pointer go to underlying value
     Type_Type type_type = type_get_type(type);
-    massert(type_type == type_ref, "type is not type_ref");
     switch (type_type) {
+        case type_ptr:
         case type_ref: {
             Type deref_type = *type;
             deref_type.modifiers.count--;
             return deref_type;
         }
-        default:
+        case type_invalid:
+        case type_number_literal:
+        case type_void:
+        case type_compile_time_type:
+        case type_function:
+        case type_multi_value:
+        case type_template:
+        case type_struct:
+        case type_int:
+        case type_float:
+        case type_uint:
+            massert(false, "unexpected type");
             return type_get_invalid_type();
     }
 }
@@ -581,6 +857,15 @@ LLVMTypeRef type_get_llvm_type(Type* type) {
     if (type->modifiers.count > 0) {
         Type_Modifier* last_modifier = type_modifier_list_get(&type->modifiers, type->modifiers.count - 1);
         switch (last_modifier->type) {
+            case type_modifier_ptr: {
+                Type underlying_type = type_underlying(type);
+                Type_Type underlying_type_type = type_get_type(&underlying_type);
+                LLVMTypeRef underlying_llvm_type = type_get_llvm_type(&underlying_type);
+                if (underlying_type_type == type_void) {
+                    return LLVMPointerType(LLVMIntType(8), 0);
+                }
+                return LLVMPointerType(underlying_llvm_type, 0);
+            }
             case type_modifier_ref: {
                 Type deref_type = type_deref(type);
                 LLVMTypeRef deref_llvm_type = type_get_llvm_type(&deref_type);
@@ -625,15 +910,34 @@ LLVMTypeRef type_get_base_llvm_type(Type_Base* type_base) {
                 red_printf("too many parameters\n");
                 abort();
             }
+            u64 count = 0;
             for (u64 i = 0; i < type_base->function.parameters.count; i++) {
                 Type* parameter_type = type_list_get(&type_base->function.parameters, i);
-                parameter_type_buffer[i] = type_get_llvm_type(parameter_type);
+                Type_Type parameter_type_type = type_get_type(parameter_type);
+                if (parameter_type_type == type_compile_time_type) continue;
+                parameter_type_buffer[count] = type_get_llvm_type(parameter_type);
+                count++;
             }
-            return LLVMFunctionType(return_llvm_type, parameter_type_buffer, type_base->function.parameters.count, false);
+            return LLVMFunctionType(return_llvm_type, parameter_type_buffer, count, false);
             break;
         }
+        case type_struct: {
+            LLVMTypeRef field_types[512];
+            if (type_base->struct_.fields.count > 512) {
+                red_printf("too many fields\n");
+                abort();
+            }
+            for (u64 i = 0; i < type_base->struct_.fields.count; i++) {
+                Type_Struct_Field* field = type_struct_field_list_get(&type_base->struct_.fields, i);
+                Type* field_type = &field->type;
+                field_types[i] = type_get_llvm_type(field_type);
+            }
+            return LLVMStructType(field_types, type_base->struct_.fields.count, false);
+        }
         case type_invalid:
+        case type_compile_time_type:
         case type_ref:
+        case type_ptr:
         case type_number_literal:
         case type_multi_value:
         case type_template:

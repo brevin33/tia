@@ -20,6 +20,8 @@ Function* function_new(Ast* ast) {
     u64 parameter_count = function_declaration->parameters.count;
     Type_List parameters = type_list_create(parameter_count);
 
+    function->is_extern_c = function_declaration->is_extern_c;
+
     bool is_template_func = false;
 
     for (u64 i = 0; i < parameter_count; i++) {
@@ -32,6 +34,8 @@ Function* function_new(Ast* ast) {
         Type parameter_type = type_find_ast(parameter_type_ast, NULL, true);
 
         if (parameter_type.base->type == type_template) {
+            is_template_func = true;
+        } else if (parameter_type.base->type == type_compile_time_type) {
             is_template_func = true;
         }
 
@@ -63,49 +67,20 @@ Function* function_new(Ast* ast) {
     return function;
 }
 
-void function_llvm_prototype_instance(Function_Instance* function) {
-    Type* function_type = &function->type;
-    LLVMTypeRef function_type_llvm = type_get_llvm_type(function_type);
-    char* mangled_name = function_get_mangled_name(function);
-    if (strcmp(function->function->name, "main") == 0) {
-        mangled_name = function->function->name;
-    }
-
-    LLVMValueRef function_value = LLVMAddFunction(context.llvm_info.module, mangled_name, function_type_llvm);
-    function->function_value = function_value;
-}
-
-void function_llvm_implement_instance(Function_Instance* function) {
-    LLVMValueRef function_value = function->function_value;
-
-    LLVMBasicBlockRef entry_block = LLVMAppendBasicBlock(function_value, "entry");
-    LLVMPositionBuilderAtEnd(context.llvm_info.builder, entry_block);
-
-    for (u64 i = 0; i < function->parameters_scope.variables.count; i++) {
-        Variable* variable = variable_list_get(&function->parameters_scope.variables, i);
-        LLVMValueRef param_value = LLVMGetParam(function_value, i);
-        Type* variable_type = &variable->type;
-        Type_Type variable_type_type = type_get_type(variable_type);
-        if (variable_type_type == type_ref) {
-            variable->value = param_value;
-        } else {
-            LLVMTypeRef param_type = type_get_llvm_type(&variable->type);
-            variable->value = LLVMBuildAlloca(context.llvm_info.builder, param_type, variable->name);
-            LLVMBuildStore(context.llvm_info.builder, param_value, variable->value);
-        }
-    }
-
-    scope_compile_scope(&function->body_scope, function);
-}
-
-void function_implement(Function_Instance* function_instance) {
+void function_prototype_instance(Function_Instance* function_instance) {
     Function* function = function_instance->function;
-    Ast* ast = function->ast;
-    Ast* body_ast = ast->function_declaration.body;
-    if (body_ast == NULL) return;
 
     function_instance->function = function;
     function_instance->parameters_scope = scope_create(NULL);
+
+    for (u64 i = 0; i < function_instance->template_to_type.templates.count; i++) {
+        Template_Map* template_map = template_map_list_get(&function_instance->template_to_type.templates, i);
+        char* template_name = template_map->name;
+        Type* template_type = &template_map->type;
+        Template_Map* templated_map = scope_add_template(&function_instance->parameters_scope, template_name, template_type);
+        massert(templated_map != NULL, "templated_map is NULL");
+    }
+
     function_instance->body_scope = scope_create(&function_instance->parameters_scope);
 
     Type return_type = function->return_type;
@@ -121,16 +96,78 @@ void function_implement(Function_Instance* function_instance) {
 
     for (u64 i = 0; i < function->parameters.count; i++) {
         Type* parameter_type = type_list_get(&parameter_types, i);
+        Type_Type parameter_type_type = type_get_type(parameter_type);
+        if (parameter_type_type == type_compile_time_type) continue;
         Variable* old_variable = variable_list_get(&function->parameters, i);
         Variable variable = {0};
         variable.name = old_variable->name;
         variable.type = *parameter_type;
         scope_add_variable(&function_instance->parameters_scope, &variable);
     }
+}
+
+void function_implement(Function_Instance* function_instance) {
+    Function* function = function_instance->function;
+    if (function->is_extern_c) return;
+    Ast* ast = function->ast;
+    Ast* body_ast = ast->function_declaration.body;
+    if (body_ast == NULL) return;
     scope_add_statements(&function_instance->body_scope, body_ast, function_instance);
 }
 
-Function_Instance* function_find(Type_List* parameters, char* name, Ast* ast, bool log_error) {
+void function_llvm_prototype_instance(Function_Instance* function_instance) {
+    Function* function = function_instance->function;
+    Type* function_type = &function_instance->type;
+    LLVMTypeRef function_type_llvm = type_get_llvm_type(function_type);
+    char* mangled_name = function_get_mangled_name(function_instance);
+    if (strcmp(function->name, "main") == 0) {
+        mangled_name = function->name;
+    }
+    if (function->is_extern_c) {
+        mangled_name = function->name;
+    }
+
+    LLVMValueRef function_value = LLVMAddFunction(context.llvm_info.module, mangled_name, function_type_llvm);
+    function_instance->function_value = function_value;
+}
+
+void function_llvm_implement_instance(Function_Instance* function) {
+    if (function->function->is_extern_c) return;
+    LLVMValueRef function_value = function->function_value;
+
+    LLVMBasicBlockRef entry_block = LLVMAppendBasicBlock(function_value, "entry");
+    LLVMPositionBuilderAtEnd(context.llvm_info.builder, entry_block);
+
+    for (u64 i = 0; i < function->parameters_scope.variables.count; i++) {
+        Variable* variable = variable_list_get(&function->parameters_scope.variables, i);
+        LLVMValueRef param_value = LLVMGetParam(function_value, i);
+        Type* variable_type = &variable->type;
+        Type_Type variable_type_type = type_get_type(variable_type);
+        if (variable_type_type == type_ref) {
+            variable->value = param_value;
+        } else {
+            LLVMTypeRef param_type = type_get_llvm_type(&variable->type);
+            if (variable->type.base->type == type_compile_time_type) {
+                variable->value = NULL;
+            } else {
+                variable->value = LLVMBuildAlloca(context.llvm_info.builder, param_type, variable->name);
+            }
+            LLVMBuildStore(context.llvm_info.builder, param_value, variable->value);
+        }
+    }
+
+    scope_compile_scope(&function->body_scope, function);
+}
+
+Function_Instance* function_find(Expression_List* parameters_exprs, char* name, Ast* ast, bool log_error) {
+    Type_List parameters_val = type_list_create(parameters_exprs->count);
+    Type_List* parameters = &parameters_val;
+    for (u64 i = 0; i < parameters_exprs->count; i++) {
+        Expression* parameter_expr = expression_list_get(parameters_exprs, i);
+        Type parameter_type = parameter_expr->type;
+        type_list_add(parameters, &parameter_type);
+    }
+
     Function_Pointer_List* functions = &context.functions;
     Function_Pointer_List maybe_functions = function_pointer_list_create(8);
     Template_To_Type template_to_type = {0};
@@ -183,6 +220,9 @@ Function_Instance* function_find(Type_List* parameters, char* name, Ast* ast, bo
                     if (type_is_equal(&deref_type, parameter_type)) {
                         continue;
                     }
+                    match = false;
+                    break;
+                } else {
                     match = false;
                     break;
                 }
@@ -299,8 +339,31 @@ Function_Instance* function_find(Type_List* parameters, char* name, Ast* ast, bo
         return NULL;
     }
 
-    // TODO: fix this
     Function* function = function_pointer_list_get_function(&match_functions, 0);
+    // special handeling for compile time types
+    for (u64 i = 0; i < parameters->count; i++) {
+        Type* parameter_type = type_list_get(parameters, i);
+        Type_Type parameter_type_type = type_get_type(parameter_type);
+        char* function_parameter_name = function->parameters.data[i].name;
+        if (parameter_type_type == type_compile_time_type) {
+            Expression* parameter_expr = expression_list_get(parameters_exprs, i);
+            Type parameter_type_info_type = parameter_expr->type_info.type;
+            type_add_mapping(&template_to_type, function_parameter_name, &parameter_type_info_type);
+        }
+    }
+    // remove the compile time types form the expression list
+    Expression_List new_parameters_exprs = expression_list_create(parameters_exprs->count);
+    for (u64 i = 0; i < parameters_exprs->count; i++) {
+        Expression* parameter_expr = expression_list_get(parameters_exprs, i);
+        Type parameter_type = parameter_expr->type;
+        Type_Type parameter_type_type = type_get_type(&parameter_type);
+        if (parameter_type_type == type_compile_time_type) {
+            continue;
+        }
+        expression_list_add(&new_parameters_exprs, parameter_expr);
+    }
+    *parameters_exprs = new_parameters_exprs;
+
     Function_Instance* function_instance = NULL;  //= &function->instances.data[0];
     for (u64 i = 0; i < function->instances.count; i++) {
         Function_Instance* instance = &function->instances.data[i];
@@ -316,6 +379,7 @@ Function_Instance* function_find(Type_List* parameters, char* name, Ast* ast, bo
         function_instance.template_to_type = template_to_type;
         u64 prev_error_count = context.numberOfErrors;
         Function_Instance* added = function_instance_list_add(&function->instances, &function_instance);
+        function_prototype_instance(added);
         function_implement(added);
         u64 new_error_count = context.numberOfErrors;
         if (new_error_count > prev_error_count) {
@@ -337,9 +401,30 @@ char* function_get_mangled_name(Function_Instance* function) {
     u64 return_type_name_len = strlen(return_type_name);
     len += return_type_name_len;
     String_List parameter_names = string_list_create(8);
+    u64 compile_time_parameter_num = 0;
     for (u64 i = 0; i < parameters->count; i++) {
         Type* parameter = type_list_get(parameters, i);
-        char* parameter_name = type_get_name(parameter);
+        char* parameter_name = NULL;
+        if (parameter->base->type == type_compile_time_type) {
+            Scope* function_scope = &function->parameters_scope;
+            for (u64 j = 0; j < function_scope->template_to_type.templates.count; j++) {
+                Template_Map* template_map = template_map_list_get(&function_scope->template_to_type.templates, compile_time_parameter_num);
+                compile_time_parameter_num++;
+                Type* template_type = &template_map->type;
+                char* template_name = type_get_name(template_type);
+                u64 template_name_len = strlen(template_name);
+                parameter_name = alloc(template_name_len + 2);
+                parameter_name = alloc(template_name_len + 2);
+                parameter_name[0] = '#';
+                memcpy(parameter_name + 1, template_name, template_name_len);
+                parameter_name[template_name_len + 1] = '\0';
+                len += template_name_len + 1;
+                break;
+            }
+            massert(parameter_name != NULL, "parameter_name is NULL");
+        } else {
+            parameter_name = type_get_name(parameter);
+        }
         string_list_add(&parameter_names, parameter_name);
         u64 parameter_name_len = strlen(parameter_name);
         len += parameter_name_len;

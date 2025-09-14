@@ -243,3 +243,15 @@ Template_Map_List template_map_list_create(u64 initial_size);
 Template_Map* template_map_list_add(Template_Map_List* list, Template_Map* template_map);
 Template_Map* template_map_list_get(Template_Map_List* list, u64 index);
 void template_map_list_pop(Template_Map_List* list);
+
+typedef struct Type_Struct_Field Type_Struct_Field;
+typedef struct {
+    Type_Struct_Field* data;
+    u64 count;
+    u64 capacity;
+} Type_Struct_Field_List;
+
+Type_Struct_Field_List type_struct_field_list_create(u64 initial_size);
+Type_Struct_Field* type_struct_field_list_add(Type_Struct_Field_List* list, Type_Struct_Field* type_struct_field);
+Type_Struct_Field* type_struct_field_list_get(Type_Struct_Field_List* list, u64 index);
+void type_struct_field_list_pop(Type_Struct_Field_List* list);

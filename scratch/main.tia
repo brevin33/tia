@@ -1,11 +1,20 @@
-#T& foo(#T& a){
-	return a
-}
 
+i32 foo(type t){
+	return t.size
+}
 
 i32 main(){
-	i32 b = 3
-	i32& a = foo(b)
-	a = 4
-	return b
+	type c = i32
+	heap allocator 
+	allocator.number_of_allocations = 0
+
+	i32* a = alloc(allocator, i32)
+	i32* b = alloc(allocator, i64)
+	b.val = 10
+
+	c d = foo(c)
+
+	return b.val
 }
+
+

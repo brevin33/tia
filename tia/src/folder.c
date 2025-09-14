@@ -1,12 +1,34 @@
 #include "tia.h"
 #include "tia/file.h"
 
+#ifdef _MSC_VER
+#pragma warning(disable : 4996)  // disables 'unsafe' function warning
+#endif
+
 void make_sure_main_does_not_use_interfaces(Folder* folder) {
     for (u64 i = 0; i < context.functions.count; i++) {
         Function* function = context.functions.data[i];
         if (strcmp(function->name, "main") == 0) {
         }
     }
+}
+
+void folder_add_dependency(Folder* folder, char* dependency_path) {
+    Folder* already_compiled = NULL;
+    for (u64 i = 0; i < context.folders.count; i++) {
+        Folder* existing = folder_pointer_list_get_folder(&context.folders, i);
+        if (strcmp(existing->path, dependency_path) == 0) {
+            already_compiled = existing;
+            break;
+        }
+    }
+
+    if (already_compiled != NULL) {
+        folder_pointer_list_add(&folder->dependencies, already_compiled);
+        return;
+    }
+    Folder* dependency = folder_new(dependency_path);
+    folder_pointer_list_add(&folder->dependencies, dependency);
 }
 
 Folder* folder_new(char* path) {
@@ -18,6 +40,17 @@ Folder* folder_new(char* path) {
     folder->path = path;
     folder->dependencies = folder_pointer_list_create(8);
     u64 folder_path_count = strlen(path);
+
+    const char* language_dir = getenv("Tia_Language_Dir");
+    if (language_dir == NULL) {
+        log_error("Tia_Language_Dir environment variable not set");
+        return NULL;
+    }
+    u64 language_dir_len = strlen(language_dir);
+    char* std_lib_path = alloc(language_dir_len + 8);
+    snprintf(std_lib_path, language_dir_len + 8, "%sstd_lib", language_dir);
+
+    folder_add_dependency(folder, std_lib_path);
 
     u64 file_count = 0;
     char** file_names = get_file_in_directory(path, &file_count);

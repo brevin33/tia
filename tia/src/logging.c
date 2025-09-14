@@ -35,6 +35,9 @@ static void log_error_base(const char* message, File* file, u64 line, u64 lines,
             }
             index++;
         }
+        if (start_index <= index && index < end_index) {
+            printf("^");
+        }
         printf("\n");
     }
 }

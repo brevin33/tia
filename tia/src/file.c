@@ -1,4 +1,5 @@
 #include "tia.h"
+#include "tia/ast.h"
 
 char* file_get_line(File* file, u64 line_number) {
     massert(line_number < file->line_start_indexes.count, "line number is out of bounds");
@@ -23,7 +24,26 @@ void file_prototype_types(File* file) {
     for (u64 i = 0; i < file_ast->global_declarations.count; i++) {
         Ast* global_declaration = ast_list_get(&file_ast->global_declarations, i);
         switch (global_declaration->type) {
-            default:
+            case ast_struct_declaration:
+                Type_Base* type_base = type_prototype_struct(global_declaration);
+                type_base_pointer_list_add(&file->types, type_base);
+                break;
+            case ast_invalid:
+            case ast_member_access:
+            case ast_file:
+            case ast_function_declaration:
+            case ast_type:
+            case ast_variable_declaration:
+            case ast_return:
+            case ast_end_statement:
+            case ast_biop:
+            case ast_number:
+            case ast_word:
+            case ast_string:
+            case ast_scope:
+            case ast_assignment:
+            case ast_multi_expression:
+            case ast_function_call:
                 break;
         }
     }
@@ -41,9 +61,78 @@ void file_prototype_functions(File* file) {
     }
 }
 
+void file_add_global_declarations(File* file) {
+    Ast* ast = file->ast;
+    Ast_File* file_ast = &ast->file;
+    for (u64 i = 0; i < file_ast->global_declarations.count; i++) {
+        Ast* global_declaration = ast_list_get(&file_ast->global_declarations, i);
+        if (global_declaration->type == ast_assignment) {
+        }
+        if (global_declaration->type == ast_function_call) {
+        }
+    }
+}
+
+void file_check_for_invalid_global_statements(File* file) {
+    Ast* ast = file->ast;
+    Ast_File* file_ast = &ast->file;
+    for (u64 i = 0; i < file_ast->global_declarations.count; i++) {
+        Ast* global_declaration = ast_list_get(&file_ast->global_declarations, i);
+        switch (global_declaration->type) {
+            case ast_function_declaration:
+            case ast_struct_declaration:
+            case ast_function_call:
+            case ast_end_statement:
+            case ast_assignment:
+                break;
+            case ast_variable_declaration:
+            case ast_return:
+            case ast_biop:
+            case ast_number:
+            case ast_word:
+            case ast_string:
+            case ast_scope:
+            case ast_multi_expression:
+            case ast_invalid:
+            case ast_file:
+            case ast_type:
+            case ast_member_access:
+                log_error_ast(global_declaration, "this type of statement is not allowed in the global scope");
+                break;
+        }
+    }
+}
+
 void file_implement(File* file) {
     for (u64 i = 0; i < file->types.count; i++) {
-        massert(false, "not implemented");
+        Type_Base* type_base = type_base_pointer_list_get_type_base(&file->types, i);
+        switch (type_base->type) {
+            case type_struct:
+                type_implement_struct(type_base);
+                break;
+            case type_invalid:
+            case type_compile_time_type:
+            case type_ptr:
+            case type_int:
+            case type_float:
+            case type_uint:
+            case type_number_literal:
+            case type_void:
+            case type_function:
+            case type_multi_value:
+            case type_template:
+            case type_ref:
+                massert(false, "should never happen");
+                break;
+        }
+    }
+
+    for (u64 i = 0; i < file->functions.count; i++) {
+        Function* function = function_pointer_list_get_function(&file->functions, i);
+        for (u64 j = 0; j < function->instances.count; j++) {
+            Function_Instance* function_instance = &function->instances.data[j];
+            function_prototype_instance(function_instance);
+        }
     }
 
     for (u64 i = 0; i < file->functions.count; i++) {
@@ -101,11 +190,17 @@ u64 file_get_lines(File* file, u64 t_start_index, u64 t_end_index, u64* out_coun
     char* file_contents = file->contents;
 
     u64 start_index;
+    if (file_contents[t_start_index] == '\n') {
+        t_start_index--;
+    }
     for (start_index = t_start_index; start_index > 0; start_index--)
         if (file_contents[start_index] == '\n') break;
     if (start_index > 0) start_index++;  // skip the newline
 
     u64 end_index;
+    if (file_contents[t_end_index - 1] == '\n') {
+        t_end_index--;
+    }
     for (end_index = t_end_index; file_contents[end_index] != '\0'; end_index++)
         if (file_contents[end_index] == '\n') break;
     if (file_contents[end_index] == '\n') end_index--;  // skip the newline
