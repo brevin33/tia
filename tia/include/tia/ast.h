@@ -24,6 +24,8 @@ typedef enum Ast_Type {
     ast_function_call,
     ast_struct_declaration,
     ast_member_access,
+    ast_alloc,
+    ast_free,
 } Ast_Type;
 
 typedef struct Ast_Member_Access {
@@ -41,11 +43,22 @@ typedef struct Ast_Function_Call {
     Ast_List arguments;
 } Ast_Function_Call;
 
+typedef struct Ast_Alloc {
+    Ast_List arguments;
+} Ast_Alloc;
+
+typedef struct Ast_Free {
+    Ast_List arguments;
+} Ast_Free;
+
 typedef struct Ast_Function_Declaration {
     Ast* return_type;
     Ast_List parameters;
     char* name;
-    Ast* body;
+    union {
+        Ast* body;
+        char* extern_c_alias;
+    };
     bool is_extern_c;
 } Ast_Function_Declaration;
 
@@ -131,6 +144,8 @@ typedef struct Ast {
         Ast_Function_Call function_call;
         Ast_Struct_Declaration struct_declaration;
         Ast_Member_Access member_access;
+        Ast_Alloc alloc;
+        Ast_Free free;
     };
 } Ast;
 
@@ -155,6 +170,10 @@ Ast ast_expresssion_parse(Token** tokens, TokenType_* delimiters, u64 num_delimi
 Ast ast_word_parse(Token** tokens);
 
 Ast ast_function_call_parse(Token** tokens);
+
+Ast ast_alloc_parse(Token** tokens);
+
+Ast ast_free_parse(Token** tokens);
 
 Ast ast_string_parse(Token** tokens);
 

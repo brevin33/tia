@@ -4,6 +4,43 @@
 #include "tia/lists.h"
 #include "tia/type.h"
 
+Function* function_new_init(Folder* folder) {
+    Function* function = alloc(sizeof(Function));
+    memset(function, 0, sizeof(Function));
+
+    char buffer[4096];
+    sprintf(buffer, "$%s_init", folder->name);
+    u64 len = strlen(buffer);
+    function->name = alloc(len + 1);
+    memcpy(function->name, buffer, len);
+    function->name[len] = '\0';
+
+    Type return_type = type_get_void_type();
+    function->return_type = return_type;
+    function->is_extern_c = false;
+    function->ast = NULL;
+    function->instances = function_instance_list_create(1);
+    function->parameters = variable_list_create(0);
+    function->instances = function_instance_list_create(1);
+
+    Template_To_Type template_to_type = {0};
+    template_to_type.templates = template_map_list_create(0);
+
+    Function_Instance function_instance = {0};
+    function_instance.function = function;
+    function_instance.template_to_type = template_to_type;
+    function_instance.parameters_scope = scope_create(&context.global_scope);
+    function_instance.body_scope = scope_create(&function_instance.parameters_scope);
+
+    Type_List parameter_types = type_list_create(0);
+
+    function_instance.type = type_get_function_type(&parameter_types, return_type);
+
+    function_instance_list_add(&function->instances, &function_instance);
+
+    return function;
+}
+
 Function* function_new(Ast* ast) {
     massert(ast->type == ast_function_declaration, "ast is not ast_function_declaration");
     Ast_Function_Declaration* function_declaration = &ast->function_declaration;
@@ -54,7 +91,19 @@ Function* function_new(Ast* ast) {
         variable_list_add(&function->parameters, &variable);
     }
 
-    function->name = function_declaration->name;
+    if (function_declaration->is_extern_c) {
+        if (function_declaration->extern_c_alias == NULL) {
+            function->name = function_declaration->name;
+        } else {
+            function->name = function_declaration->extern_c_alias;
+        }
+    } else {
+        function->name = function_declaration->name;
+    }
+
+    if (is_template_func && function_declaration->is_extern_c) {
+        log_error_ast(ast, "extern_c functions can't be templated");
+    }
 
     if (!is_template_func) {
         function->instances = function_instance_list_create(1);
@@ -71,7 +120,7 @@ void function_prototype_instance(Function_Instance* function_instance) {
     Function* function = function_instance->function;
 
     function_instance->function = function;
-    function_instance->parameters_scope = scope_create(NULL);
+    function_instance->parameters_scope = scope_create(&context.global_scope);
 
     for (u64 i = 0; i < function_instance->template_to_type.templates.count; i++) {
         Template_Map* template_map = template_map_list_get(&function_instance->template_to_type.templates, i);
@@ -104,6 +153,16 @@ void function_prototype_instance(Function_Instance* function_instance) {
         variable.type = *parameter_type;
         scope_add_variable(&function_instance->parameters_scope, &variable);
     }
+
+    if (function->is_extern_c) {
+        Ast* ast = function->ast;
+        Ast_Function_Declaration* function_declaration = &ast->function_declaration;
+        if (function_declaration->extern_c_alias == NULL) {
+            function_instance->extern_c_real_name = function->name;
+        } else {
+            function_instance->extern_c_real_name = function_declaration->name;
+        }
+    }
 }
 
 void function_implement(Function_Instance* function_instance) {
@@ -120,14 +179,14 @@ void function_llvm_prototype_instance(Function_Instance* function_instance) {
     Type* function_type = &function_instance->type;
     LLVMTypeRef function_type_llvm = type_get_llvm_type(function_type);
     char* mangled_name = function_get_mangled_name(function_instance);
-    if (strcmp(function->name, "main") == 0) {
-        mangled_name = function->name;
-    }
     if (function->is_extern_c) {
-        mangled_name = function->name;
+        mangled_name = function_instance->extern_c_real_name;
     }
 
     LLVMValueRef function_value = LLVMAddFunction(context.llvm_info.module, mangled_name, function_type_llvm);
+    if (strcmp(function->name, "main") == 0) {
+        context.user_defined_main_function = function;
+    }
     function_instance->function_value = function_value;
 }
 
@@ -156,7 +215,14 @@ void function_llvm_implement_instance(Function_Instance* function) {
         }
     }
 
-    scope_compile_scope(&function->body_scope, function);
+    bool exited_scope = scope_compile_scope(&function->body_scope, function);
+    if (!exited_scope) {
+        Type return_type = function->type.base->function.return_type;
+        Type_Type return_type_type = return_type.base->type;
+        if (return_type_type == type_void) {
+            LLVMBuildRetVoid(context.llvm_info.builder);
+        }
+    }
 }
 
 Function_Instance* function_find(Expression_List* parameters_exprs, char* name, Ast* ast, bool log_error) {

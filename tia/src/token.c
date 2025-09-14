@@ -83,6 +83,12 @@ void token_swap_if_keyword(Token* token) {
     if (strcmp(string, "extern_c") == 0) {
         token->type = tt_extern_c;
     }
+    if (strcmp(string, "alloc") == 0) {
+        token->type = tt_alloc;
+    }
+    if (strcmp(string, "free") == 0) {
+        token->type = tt_free;
+    }
 }
 
 Token_List token_get_tokens(File* file) {
@@ -243,6 +249,8 @@ bool token_causes_endline_to_be_endstatement(Token* token) {
         case tt_close_brace:
         case tt_close_paren:
         case tt_close_bracket:
+        case tt_alloc:
+        case tt_free:
             return true;
         case tt_dollar:
         case tt_mult:

@@ -25,6 +25,8 @@ typedef enum TokenType_ {
     tt_dot,
     tt_mult,
     tt_extern_c,
+    tt_alloc,
+    tt_free,
 } TokenType_;
 
 typedef struct Token {

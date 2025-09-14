@@ -48,7 +48,7 @@ Ast ast_create(Token* tokens) {
 bool ast_parse_as_function_declaration(Token** tokens) {
     Token* token = *tokens;
     if (!ast_parseable_as_type(&token)) return false;
-    if (token->type != tt_identifier) return false;
+    if (token->type != tt_identifier && token->type != tt_alloc && token->type != tt_free) return false;
     token++;
     if (token->type != tt_open_paren) return false;
     return true;
@@ -206,7 +206,7 @@ Ast ast_function_declaration_parse(Token** tokens) {
     *function_declaration.function_declaration.return_type = type;
     if (type.type == ast_invalid) return type;
 
-    if (token->type != tt_identifier) {
+    if (token->type != tt_identifier && token->type != tt_alloc && token->type != tt_free) {
         log_error_token(token, "Expected function name");
         Ast err = {0};
         return err;
@@ -264,6 +264,24 @@ Ast ast_function_declaration_parse(Token** tokens) {
             return err;
         }
         function_declaration.function_declaration.body = NULL;
+        if (token->type == tt_identifier) {
+            char* as_string = token_get_string(token);
+            if (strcmp(as_string, "as") == 0) {
+                token++;
+                if (token->type != tt_identifier) {
+                    log_error_token(token, "Expected extern_c alias");
+                    Ast err = {0};
+                    return err;
+                }
+                char* extern_c_alias = token_get_string(token);
+                token++;
+                function_declaration.function_declaration.extern_c_alias = extern_c_alias;
+            } else {
+                function_declaration.function_declaration.extern_c_alias = NULL;
+            }
+        } else {
+            function_declaration.function_declaration.extern_c_alias = NULL;
+        }
     }
 
     function_declaration.num_tokens = token - function_declaration.token;
@@ -522,6 +540,8 @@ Ast ast_general_parse(Token** tokens) {
         case tt_struct: {
             return ast_struct_declaration_parse(tokens);
         }
+        case tt_alloc:
+        case tt_free:
         case tt_string: {
             TokenType_ delimiters[] = {tt_end_statement};
             return ast_expresssion_parse(tokens, delimiters, arr_length(delimiters));
@@ -606,6 +626,88 @@ Ast ast_number_parse(Token** tokens) {
     }
     token++;
 
+    ast.num_tokens = token - ast.token;
+    *tokens = token;
+    return ast;
+}
+
+Ast ast_alloc_parse(Token** tokens) {
+    Token* token = *tokens;
+    Ast ast = {0};
+    ast.type = ast_alloc;
+    ast.token = token;
+    massert(token->type == tt_alloc, "token type is not tt_alloc");
+    token++;
+
+    if (token->type != tt_open_paren) {
+        log_error_token(token, "Expected open paren after alloc");
+        Ast err = {0};
+        return err;
+    }
+    token++;
+
+    Ast_List arguments = ast_list_create(0);
+    while (true) {
+        TokenType_ delimiters[] = {tt_comma, tt_close_paren};
+        Ast argument = ast_expresssion_parse(&token, delimiters, arr_length(delimiters));
+        if (argument.type == ast_invalid) return argument;
+        ast_list_add(&arguments, &argument);
+        if (token->type == tt_comma) {
+            token++;
+            continue;
+        }
+        if (token->type == tt_close_paren) {
+            break;
+        }
+        log_error_token(token, "Expected comma or close paren after function parameter");
+        Ast err = {0};
+        return err;
+    }
+    massert(token->type == tt_close_paren, "token type is not tt_close_paren");
+    token++;
+
+    ast.alloc.arguments = arguments;
+    ast.num_tokens = token - ast.token;
+    *tokens = token;
+    return ast;
+}
+
+Ast ast_free_parse(Token** tokens) {
+    Token* token = *tokens;
+    Ast ast = {0};
+    ast.type = ast_free;
+    ast.token = token;
+    massert(token->type == tt_free, "token type is not tt_alloc");
+    token++;
+
+    if (token->type != tt_open_paren) {
+        log_error_token(token, "Expected open paren after alloc");
+        Ast err = {0};
+        return err;
+    }
+    token++;
+
+    Ast_List arguments = ast_list_create(0);
+    while (true) {
+        TokenType_ delimiters[] = {tt_comma, tt_close_paren};
+        Ast argument = ast_expresssion_parse(&token, delimiters, arr_length(delimiters));
+        if (argument.type == ast_invalid) return argument;
+        ast_list_add(&arguments, &argument);
+        if (token->type == tt_comma) {
+            token++;
+            continue;
+        }
+        if (token->type == tt_close_paren) {
+            break;
+        }
+        log_error_token(token, "Expected comma or close paren after function parameter");
+        Ast err = {0};
+        return err;
+    }
+    massert(token->type == tt_close_paren, "token type is not tt_close_paren");
+    token++;
+
+    ast.alloc.arguments = arguments;
     ast.num_tokens = token - ast.token;
     *tokens = token;
     return ast;
@@ -719,6 +821,10 @@ Ast ast_value_parse(Token** tokens) {
             return ast_string_parse(tokens);
         case tt_open_paren:
             return ast_parenthesized_expression_parse(tokens);
+        case tt_alloc:
+            return ast_alloc_parse(tokens);
+        case tt_free:
+            return ast_free_parse(tokens);
         case tt_end_of_file:
         case tt_end_statement:
         case tt_extern_c:

@@ -233,6 +233,12 @@ Type type_find_ast(Ast* ast, Scope* scope, bool log_error) {
     type.modifiers = ast->type_info.modifiers;
     type.base = type_base;
 
+    Type_Type base_type_type = type_base->type;
+    if (base_type_type == type_template && scope != NULL) {
+        log_error_ast(ast, "template does not have a mapping");
+        return type_get_invalid_type();
+    }
+
     return type;
 }
 
@@ -811,6 +817,16 @@ Type type_underlying(Type* type) {  // pointer go to underlying value
             massert(false, "unexpected type");
             return type_get_invalid_type();
     }
+}
+
+bool type_is_reference_of_type_type(Type* ref, Type_Type of) {
+    Type ref_deref = type_deref(ref);
+    return type_get_type(&ref_deref) == of;
+}
+
+bool type_is_ptr_of_type_type(Type* ref, Type_Type of) {
+    Type underlying_type = type_underlying(ref);
+    return type_get_type(&underlying_type) == of;
 }
 
 bool type_is_template(Type* type) {

@@ -8,7 +8,10 @@ typedef struct Function_Instance {
     Type type;
     Function* function;
     Scope parameters_scope;
-    Scope body_scope;
+    union {
+        Scope body_scope;
+        char* extern_c_real_name;
+    };
     LLVMValueRef function_value;
     Template_To_Type template_to_type;
 } Function_Instance;
@@ -23,6 +26,8 @@ typedef struct Function {
 } Function;
 
 Function* function_new(Ast* ast);
+
+Function* function_new_init(Folder* folder);
 
 void function_implement(Function_Instance* function);
 

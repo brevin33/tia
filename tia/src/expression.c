@@ -23,6 +23,10 @@ Expression expression_create(Ast* ast, Scope* scope, Function_Instance* in_funct
             return expression_create_member_access(ast, scope, in_function);
         case ast_type:
             return expression_create_type(ast, scope, in_function, true);
+        case ast_alloc:
+            return expression_create_alloc(ast, scope, in_function);
+        case ast_free:
+            return expression_create_free(ast, scope, in_function);
         case ast_variable_declaration:
         case ast_return:
         case ast_struct_declaration:
@@ -209,6 +213,18 @@ Expression expression_create_member_access(Ast* ast, Scope* scope, Function_Inst
     }
 }
 
+Expression expression_create_alloc(Ast* ast, Scope* scope, Function_Instance* in_function) {
+    massert(ast->type == ast_alloc, "ast is not ast_alloc");
+    Expression expression = {0};
+    expression.expr_type = et_alloc;
+    expression.ast = ast;
+}
+
+Expression expression_create_free(Ast* ast, Scope* scope, Function_Instance* in_function) {
+    massert(ast->type == ast_free, "ast is not ast_free");
+    massert(false, "not implemented");
+}
+
 Expression expression_create_function_call(Ast* ast, Scope* scope, Function_Instance* in_function) {
     massert(ast->type == ast_function_call, "ast is not ast_function_call");
     Expression expression = {0};
@@ -261,6 +277,10 @@ Expression expression_create_type(Ast* ast, Scope* scope, Function_Instance* in_
     expression.expr_type = et_type;
     expression.ast = ast;
     expression.type_info.type = type_find_ast(ast, scope, log_error);
+    if (expression.type_info.type.base->type == type_invalid) {
+        Expression err = {0};
+        return err;
+    }
     expression.type = type_get_compile_time_type(NULL);
     return expression;
 }
@@ -372,6 +392,8 @@ Expression expression_cast(Expression* expression, Type* type) {
 }
 
 bool expression_can_implicitly_cast_without_deref(Type* expression, Type* type) {
+    if (type_is_invalid(expression)) return true;  // do this to not propagate a billion errors from anything causing an invalid type
+    if (type_is_invalid(type)) return true;        // do this to not propagate a billion errors from anything causing an invalid type
     if (type_is_equal(expression, type)) return true;
 
     Type_Type expression_type_type = type_get_type(expression);
@@ -421,6 +443,14 @@ bool expression_can_implicitly_cast_without_deref(Type* expression, Type* type) 
         Type expression_type_underlying_type = type_underlying(expression);
         Type_Type expression_type_underlying_type_type = type_get_type(&expression_type_underlying_type);
         if (expression_type_underlying_type_type == type_void && type_type == type_ptr) {
+            return true;
+        }
+    }
+
+    if (type_type == type_ptr) {
+        Type type_underlying_type = type_underlying(type);
+        Type_Type type_underlying_type_type = type_get_type(&type_underlying_type);
+        if (type_underlying_type_type == type_void && expression_type_type == type_ptr) {
             return true;
         }
     }
@@ -560,8 +590,14 @@ LLVMValueRef expression_compile_function_call(Expression* expression, Function_I
     massert(function_value != NULL, "function_value is NULL");
     LLVMTypeRef function_type = type_get_llvm_type(&to_call->type);
 
-    LLVMValueRef result = LLVMBuildCall2(context.llvm_info.builder, function_type, function_value, argument_values.data, argument_values.count, "call");
-    return result;
+    Type_Type return_type_type = type_get_type(&to_call->type.base->function.return_type);
+    if (return_type_type != type_void) {
+        LLVMValueRef result = LLVMBuildCall2(context.llvm_info.builder, function_type, function_value, argument_values.data, argument_values.count, "call");
+        return result;
+    } else {
+        LLVMValueRef result = LLVMBuildCall2(context.llvm_info.builder, function_type, function_value, argument_values.data, argument_values.count, "");
+        return result;
+    }
 }
 
 LLVMValueRef expression_compile_get_type_size(Expression* expression, Function_Instance* func, Scope* scope) {

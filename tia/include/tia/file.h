@@ -21,7 +21,7 @@ void file_prototype_types(File* file);
 
 void file_prototype_functions(File* file);
 
-void file_add_global_variables(File* file);
+void file_add_global_declarations(File* file, Function* init_function);
 
 void file_check_for_invalid_global_statements(File* file);
 

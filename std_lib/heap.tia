@@ -1,10 +1,18 @@
 
-extern_c void* malloc(u64 size)
+extern_c void* malloc(u64 size) as _c_malloc
+
+extern_c void free(void* ptr) as _c_free
 
 struct heap{
 	i8 some_value_becuase_it_cant_be_empty
 }
 
+heap global_heap
+
 void* alloc(heap& allocator, type type_to_alloc){
-	return malloc(type_to_alloc.size)
+	return _c_malloc(type_to_alloc.size)
+}
+
+void free(heap& allocator, void* ptr){
+	_c_free(ptr)
 }

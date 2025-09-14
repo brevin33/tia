@@ -28,6 +28,8 @@ typedef struct {
     Type_Base_Pointer_List types;
     Function_Pointer_List functions;
     i64 numberOfErrors;
+    Scope global_scope;
+    Function* user_defined_main_function;
     union {
         LLVM_Context_Info llvm_info;
     };

@@ -61,14 +61,25 @@ void file_prototype_functions(File* file) {
     }
 }
 
-void file_add_global_declarations(File* file) {
+void file_add_global_declarations(File* file, Function* init_function) {
+    Function_Instance* init_function_instance = &init_function->instances.data[0];
     Ast* ast = file->ast;
     Ast_File* file_ast = &ast->file;
     for (u64 i = 0; i < file_ast->global_declarations.count; i++) {
         Ast* global_declaration = ast_list_get(&file_ast->global_declarations, i);
         if (global_declaration->type == ast_assignment) {
+            Statement statement = statement_create(global_declaration, &context.global_scope, init_function_instance);
+            statement_list_add(&file->global_declarations, &statement);
+
+            Scope* init_body_scope = &init_function_instance->body_scope;
+            statement_list_add(&init_body_scope->statements, &statement);
         }
         if (global_declaration->type == ast_function_call) {
+            Statement statement = statement_create(global_declaration, &context.global_scope, init_function_instance);
+            statement_list_add(&file->global_declarations, &statement);
+
+            Scope* init_body_scope = &init_function_instance->body_scope;
+            statement_list_add(&init_body_scope->statements, &statement);
         }
     }
 }

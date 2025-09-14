@@ -9,6 +9,7 @@ static void context_init(Arena* arena) {
     context.types = type_base_pointer_list_create(8);
     context.functions = function_pointer_list_create(8);
     context.numberOfErrors = 0;
+    context.global_scope = scope_create(NULL);
     init_types();
 }
 
@@ -67,6 +68,15 @@ char* compile_tia_project(Folder* folder) {
         }
     }
 
+    // setup globals
+    for (u64 i = 0; i < context.global_scope.variables.count; i++) {
+        Variable* variable = variable_list_get(&context.global_scope.variables, i);
+        LLVMTypeRef variable_type = type_get_llvm_type(&variable->type);
+        LLVMValueRef variable_value = LLVMAddGlobal(context.llvm_info.module, variable_type, variable->name);
+        LLVMSetInitializer(variable_value, LLVMConstNull(variable_type));
+        variable->value = variable_value;
+    }
+
     // compile functions that need compiled
     for (u64 i = 0; i < context.functions.count; i++) {
         Function* function = function_pointer_list_get_function(&context.functions, i);
@@ -75,6 +85,19 @@ char* compile_tia_project(Folder* folder) {
             function_llvm_implement_instance(function_instance);
         }
     }
+
+    // compile the real main and global init functions
+    LLVMTypeRef main_function_type = LLVMFunctionType(LLVMInt32Type(), NULL, 0, false);
+    LLVMValueRef main_function_value = LLVMAddFunction(context.llvm_info.module, "main", main_function_type);
+    LLVMBasicBlockRef main_entry_block = LLVMAppendBasicBlock(main_function_value, "entry");
+    LLVMPositionBuilderAtEnd(context.llvm_info.builder, main_entry_block);
+    folder_call_init_functions(folder, main_entry_block);
+    Function* main_function = context.user_defined_main_function;
+    Function_Instance* main_function_instance = &main_function->instances.data[0];
+    LLVMTypeRef main_function_type_llvm = type_get_llvm_type(&main_function_instance->type);
+    LLVMValueRef main_function_value_llvm = main_function_instance->function_value;
+    LLVMValueRef return_value = LLVMBuildCall2(context.llvm_info.builder, main_function_type_llvm, main_function_value_llvm, NULL, 0, "");
+    LLVMBuildRet(context.llvm_info.builder, return_value);
 
     char* ir = LLVMPrintModuleToString(context.llvm_info.module);
     printf("\n%s\n\n", ir);

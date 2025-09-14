@@ -19,6 +19,8 @@ typedef enum Expression_Type {
     et_get_ptr,
     et_type,
     et_get_type_size,
+    et_alloc,
+    et_free,
 } Expression_Type;
 
 typedef struct Expression_Number {
@@ -28,6 +30,11 @@ typedef struct Expression_Number {
         double number_float;
     };
 } Expression_Number;
+
+typedef struct Expression_Alloc {
+    Type allocator_type;
+    Expression_List arguments;
+} Expression_Alloc;
 
 typedef struct Expression_Function_Call {
     Function_Instance* function_instance;
@@ -119,6 +126,10 @@ Expression expression_create_word(Ast* ast, Scope* scope, Function_Instance* in_
 Expression expression_create_multi_expression(Ast* ast, Scope* scope, Function_Instance* in_function);
 
 Expression expression_create_function_call(Ast* ast, Scope* scope, Function_Instance* in_function);
+
+Expression expression_create_alloc(Ast* ast, Scope* scope, Function_Instance* in_function);
+
+Expression expression_create_free(Ast* ast, Scope* scope, Function_Instance* in_function);
 
 bool expression_can_implicitly_cast_without_deref(Type* expression, Type* type);
 

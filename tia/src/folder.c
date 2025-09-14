@@ -31,6 +31,27 @@ void folder_add_dependency(Folder* folder, char* dependency_path) {
     folder_pointer_list_add(&folder->dependencies, dependency);
 }
 
+void folder_call_init_functions(Folder* folder, LLVMBasicBlockRef block_to_call_from) {
+    for (u64 i = 0; i < folder->dependencies.count; i++) {
+        Folder* dependency = folder_pointer_list_get_folder(&folder->dependencies, i);
+        folder_call_init_functions(dependency, block_to_call_from);
+    }
+
+    Function* init_function = folder->init_function;
+    Function_Instance* init_function_instance = &init_function->instances.data[0];
+
+    function_llvm_prototype_instance(init_function_instance);
+    function_llvm_implement_instance(init_function_instance);
+
+    LLVMPositionBuilderAtEnd(context.llvm_info.builder, block_to_call_from);
+
+    LLVMValueRef init_function_value = init_function_instance->function_value;
+
+    LLVMTypeRef init_function_type = type_get_llvm_type(&init_function_instance->type);
+
+    LLVMBuildCall2(context.llvm_info.builder, init_function_type, init_function_value, NULL, 0, "");
+}
+
 Folder* folder_new(char* path) {
     Folder* folder = alloc(sizeof(Folder));
     memset(folder, 0, sizeof(Folder));
@@ -39,6 +60,7 @@ Folder* folder_new(char* path) {
     folder->name = get_file_name(path);
     folder->path = path;
     folder->dependencies = folder_pointer_list_create(8);
+    folder->called_init_function = false;
     u64 folder_path_count = strlen(path);
 
     const char* language_dir = getenv("Tia_Language_Dir");
@@ -49,8 +71,9 @@ Folder* folder_new(char* path) {
     u64 language_dir_len = strlen(language_dir);
     char* std_lib_path = alloc(language_dir_len + 8);
     snprintf(std_lib_path, language_dir_len + 8, "%sstd_lib", language_dir);
-
-    folder_add_dependency(folder, std_lib_path);
+    if (strcmp(path, std_lib_path) != 0) {
+        folder_add_dependency(folder, std_lib_path);
+    }
 
     u64 file_count = 0;
     char** file_names = get_file_in_directory(path, &file_count);
@@ -68,6 +91,9 @@ Folder* folder_new(char* path) {
         file_pointer_list_add(&folder->files, file);
     }
 
+    Function* init_function = function_new_init(folder);
+    folder->init_function = init_function;
+
     for (u64 i = 0; i < folder->files.count; i++) {
         File* file = file_pointer_list_get_file(&folder->files, i);
         file_prototype_types(file);
@@ -76,6 +102,16 @@ Folder* folder_new(char* path) {
     for (u64 i = 0; i < folder->files.count; i++) {
         File* file = file_pointer_list_get_file(&folder->files, i);
         file_prototype_functions(file);
+    }
+
+    for (u64 i = 0; i < folder->files.count; i++) {
+        File* file = file_pointer_list_get_file(&folder->files, i);
+        file_add_global_declarations(file, folder->init_function);
+    }
+
+    for (u64 i = 0; i < folder->files.count; i++) {
+        File* file = file_pointer_list_get_file(&folder->files, i);
+        file_check_for_invalid_global_statements(file);
     }
 
     for (u64 i = 0; i < folder->files.count; i++) {

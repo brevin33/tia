@@ -156,6 +156,8 @@ bool type_base_is_invalid(Type_Base* type);
 bool type_is_invalid(Type* type);
 bool type_is_reference_of(Type* ref, Type* of);
 bool type_is_template(Type* type);
+bool type_is_reference_of_type_type(Type* ref, Type_Type of);
+bool type_is_ptr_of_type_type(Type* ref, Type_Type of);
 
 // LLVM compilation
 LLVMTypeRef type_get_llvm_type(Type* type);
