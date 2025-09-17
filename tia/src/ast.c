@@ -128,6 +128,7 @@ Ast ast_type_parse(Token** tokens) {
             case tt_ref: {
                 Type_Modifier type_modifier = {0};
                 type_modifier.type = type_modifier_ref;
+                type_modifier.allocator = expression_get_unknown_allocator();
                 type_modifier_list_add(&modifiers, &type_modifier);
                 token++;
                 break;
@@ -135,6 +136,7 @@ Ast ast_type_parse(Token** tokens) {
             case tt_mult: {
                 Type_Modifier type_modifier = {0};
                 type_modifier.type = type_modifier_ptr;
+                type_modifier.allocator = expression_get_unknown_allocator();
                 type_modifier_list_add(&modifiers, &type_modifier);
                 token++;
                 break;

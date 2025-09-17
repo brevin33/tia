@@ -5,6 +5,8 @@ Scope scope_create(Scope* parent) {
     scope.parent = parent;
     scope.statements = statement_list_create(8);
     scope.variables = variable_list_create(8);
+    scope.alloc_expressions = expression_list_create(1);
+    scope.default_allocator = NULL;
     return scope;
 }
 
@@ -30,7 +32,7 @@ Variable* scope_add_variable(Scope* scope, Variable* variable) {
     return in_list_variable;
 }
 
-Variable* scope_get_variable(Scope* scope, char* name) {
+Variable* scope_get_variable(Scope* scope, const char* name) {
     for (u64 i = 0; i < scope->variables.count; i++) {
         Variable* variable = variable_list_get(&scope->variables, i);
         if (strcmp(variable->name, name) == 0) {
@@ -54,6 +56,16 @@ Type* scope_get_templated_type(Scope* scope, char* name) {
         return scope_get_templated_type(scope->parent, name);
     }
     return NULL;
+}
+
+Expression* scope_get_default_allocator(Scope* scope) {
+    if (scope->default_allocator != NULL) {
+        return scope->default_allocator;
+    }
+    if (scope->parent == NULL) {
+        return NULL;
+    }
+    return scope_get_default_allocator(scope->parent);
 }
 
 Template_Map* scope_add_template(Scope* scope, char* name, Type* type) {
@@ -112,5 +124,23 @@ void scope_add_statements(Scope* scope, Ast* ast, Function_Instance* function) {
         Statement statement = statement_create(statement_ast, scope, function);
         if (statement.type == st_invalid) continue;
         statement_list_add(&scope->statements, &statement);
+    }
+
+    for (u64 i = 0; i < scope->alloc_expressions.count; i++) {
+        Expression* expression = expression_list_get(&scope->alloc_expressions, i);
+        massert(expression->expr_type == et_alloc, "expression is not et_alloc");
+        Expression* allocator = type_get_allocator(&expression->type);
+        if (allocator == expression) {
+            Expression* default_allocator = scope_get_default_allocator(scope);
+            type_set_allocator(&expression->type, default_allocator);
+
+            Expression_List args = expression_list_create(2);
+            expression_list_add(&args, default_allocator);
+            expression_list_add(&args, expression->alloc.type_argument);
+
+            Function_Instance* function_instance = function_find(&args, "alloc", expression->ast, true);
+            expression->alloc.function_instance = function_instance;
+        }
+        massert(expression->alloc.function_instance != NULL, "function_instance is NULL");
     }
 }

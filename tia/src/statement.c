@@ -2,6 +2,8 @@
 
 Statement statement_create(Ast* ast, Scope* scope, Function_Instance* function) {
     switch (ast->type) {
+        case ast_alloc:
+        case ast_free:
         case ast_type:
         case ast_word:
         case ast_string:
@@ -87,9 +89,10 @@ Statement statement_create_assignment(Ast* ast, Scope* scope, Function_Instance*
             if (multi_expression->expressions.count != assignees.count) {
                 if (assignees.count == 1) {
                     Assignee assignee = *assignees_list_get(&assignees, 0);
-                    Type assignee_type = *statement_get_assignee_type(&assignee);
+                    Type assignee_type = statement_get_assignee_type(&assignee);
                     Type_Type assignee_type_type_base = assignee_type.base->type;
-                    if (assignee_type_type_base == type_struct) {
+                    Type_Type assignee_type_type = type_get_type(&assignee_type);
+                    if (assignee_type_type_base == type_struct && (assignee_type_type == type_ref || assignee_type_type == type_struct)) {
                         Type_Struct* struct_type = &assignee_type.base->struct_;
                         if (multi_expression->expressions.count != struct_type->fields.count) {
                             u64 values_count = multi_expression->expressions.count;
@@ -129,7 +132,7 @@ Statement statement_create_assignment(Ast* ast, Scope* scope, Function_Instance*
             for (u64 i = 0; i < multi_expression->expressions.count; i++) {
                 Expression* value = &multi_expression->expressions.data[i];
                 Assignee* assignee = assignees_list_get(&assignees, i);
-                Type assignee_type = *statement_get_assignee_type(assignee);
+                Type assignee_type = statement_get_assignee_type(assignee);
                 if (assignee->is_variable_declaration) {
                     Variable* variable = assignee->variable;
                     if (assignee_type.base->type == type_compile_time_type) {
@@ -137,9 +140,16 @@ Statement statement_create_assignment(Ast* ast, Scope* scope, Function_Instance*
                         Type* template_type = &value->type_info.type;
                         scope_add_template(scope, variable->name, template_type);
                     }
-                } else {
-                    Type deref_type = type_deref(&assignee_type);
-                    assignee_type = deref_type;
+                }
+
+                bool should_override_allocators = type_should_override_allocators(&assignee_type, &value->type);
+                if (should_override_allocators) {
+                    if (assignee->is_variable_declaration) {
+                        Variable* variable = assignee->variable;
+                        type_set_allocators(&variable->type, &value->type);
+                    } else {
+                        expression_reverse_set_allocators(assignee->expression, &value->type);
+                    }
                 }
 
                 Expression value_expression = expression_implicitly_cast(value, &assignee_type);
@@ -158,7 +168,7 @@ Statement statement_create_assignment(Ast* ast, Scope* scope, Function_Instance*
                 return err;
             }
             Assignee* assignee = assignees_list_get(&assignees, 0);
-            Type assignee_type = *statement_get_assignee_type(assignees_list_get(&assignees, 0));
+            Type assignee_type = statement_get_assignee_type(assignees_list_get(&assignees, 0));
             if (assignee->is_variable_declaration) {
                 Variable* variable = assignee->variable;
                 if (assignee_type.base->type == type_compile_time_type) {
@@ -166,10 +176,19 @@ Statement statement_create_assignment(Ast* ast, Scope* scope, Function_Instance*
                     Type* template_type = &value.type_info.type;
                     scope_add_template(scope, variable->name, template_type);
                 }
-            } else {
-                Type deref_type = type_deref(&assignee_type);
-                assignee_type = deref_type;
             }
+
+            bool should_override_allocators = type_should_override_allocators(&assignee_type, &value.type);
+            if (should_override_allocators) {
+                if (assignee->is_variable_declaration) {
+                    Variable* variable = assignee->variable;
+                    type_set_allocators(&variable->type, &value.type);
+                } else {
+                    expression_reverse_set_allocators(assignee->expression, &value.type);
+                }
+            }
+
+            assignee_type = statement_get_assignee_type(assignees_list_get(&assignees, 0));
 
             Expression value_expression = expression_implicitly_cast(&value, &assignee_type);
             if (value_expression.expr_type == et_invalid) {
@@ -257,11 +276,12 @@ Statement statement_create_ignore(Ast* ast, Scope* scope, Function_Instance* fun
     return statement;
 }
 
-Type* statement_get_assignee_type(Assignee* assignee) {
+Type statement_get_assignee_type(Assignee* assignee) {
     if (assignee->is_variable_declaration) {
-        return &assignee->variable->type;
+        return assignee->variable->type;
     } else {
-        return &assignee->expression->type;
+        Type deref_type = type_deref(&assignee->expression->type);
+        return deref_type;
     }
 }
 

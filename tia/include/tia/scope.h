@@ -19,13 +19,15 @@ typedef struct Scope {
     union {
         LLVMBasicBlockRef continue_block;
     };
+    Expression_List alloc_expressions;
+    Expression* default_allocator;
 } Scope;
 
 Scope scope_create(Scope* parent);
 
 Variable* scope_add_variable(Scope* scope, Variable* variable);
 
-Variable* scope_get_variable(Scope* scope, char* name);
+Variable* scope_get_variable(Scope* scope, const char* name);
 
 void scope_add_statements(Scope* scope, Ast* ast, Function_Instance* function);
 
@@ -34,3 +36,5 @@ bool scope_compile_scope(Scope* scope, Function_Instance* func);
 Type* scope_get_templated_type(Scope* scope, char* name);
 
 Template_Map* scope_add_template(Scope* scope, char* name, Type* type);
+
+Expression* scope_get_default_allocator(Scope* scope);

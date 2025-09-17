@@ -14,6 +14,7 @@ typedef enum Type_Modifier_Type {
 
 typedef struct Type_Modifier {
     Type_Modifier_Type type;
+    Expression* allocator;
 } Type_Modifier;
 
 typedef struct Type {
@@ -139,8 +140,8 @@ char* type_get_struct_name(const char* last_name, Template_To_Type* template_to_
 Type_Type type_get_type(Type* type);
 Type type_deref(Type* type);       // pointer go to references
 Type type_underlying(Type* type);  // pointer go to underlying value
-Type type_get_reference(Type* type);
-Type type_get_ptr(Type* type);
+Type type_get_reference(Type* type, Expression* allocator);
+Type type_get_ptr(Type* type, Expression* allocator);
 
 Type type_copy(Type* type);
 Template_To_Type copy_template_to_type(Template_To_Type* template_to_type);
@@ -151,13 +152,21 @@ bool type_mapping_equal(Template_To_Type* template_to_type, Template_To_Type* ot
 Type type_get_mapped_type(Template_To_Type* template_to_type, Type* type);
 bool type_needs_mapped(Template_To_Type* template_to_type, Type* type);
 
+void type_set_allocator(Type* type, Expression* allocator);
+void type_set_allocators(Type* type, Type* type_with_allocators);
+
+bool type_should_override_allocators(Type* overriden_type, Type* overriding_type);
+
 bool type_is_equal(Type* type_a, Type* type_b);
+bool type_is_equal_without_allocator(Type* type_a, Type* type_b);
 bool type_base_is_invalid(Type_Base* type);
 bool type_is_invalid(Type* type);
 bool type_is_reference_of(Type* ref, Type* of);
 bool type_is_template(Type* type);
 bool type_is_reference_of_type_type(Type* ref, Type_Type of);
 bool type_is_ptr_of_type_type(Type* ref, Type_Type of);
+
+Expression* type_get_allocator(Type* type);
 
 // LLVM compilation
 LLVMTypeRef type_get_llvm_type(Type* type);

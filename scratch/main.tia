@@ -1,24 +1,12 @@
 
-i32 foo(type t){
-	return t.size
-}
 
-i32 bob = 10
+
 
 i32 main(){
-	type c = i32
-
-	i32* a = alloc(global_heap, i32)
-	i32* b = alloc(global_heap, i64)
-	b.val = 10
-
-	free(global_heap, b)
-
-
-
-	c d = foo(c)
-
-	return bob
+	i32 a = 10;
+	i32& b = a;
+	i32* c = alloc(i32);
+	return a;
 }
 
 

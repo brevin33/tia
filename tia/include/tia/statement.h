@@ -69,7 +69,7 @@ Statement statement_create_expression(Ast* ast, Scope* scope, Function_Instance*
 
 Statement statement_create_scope(Ast* ast, Scope* scope, Function_Instance* function);
 
-Type* statement_get_assignee_type(Assignee* assignee);
+Type statement_get_assignee_type(Assignee* assignee);
 
 bool statement_compile(Statement* statement, Function_Instance* func, Scope* scope);
 

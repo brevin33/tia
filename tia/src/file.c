@@ -29,6 +29,8 @@ void file_prototype_types(File* file) {
                 type_base_pointer_list_add(&file->types, type_base);
                 break;
             case ast_invalid:
+            case ast_alloc:
+            case ast_free:
             case ast_member_access:
             case ast_file:
             case ast_function_declaration:
@@ -99,6 +101,8 @@ void file_check_for_invalid_global_statements(File* file) {
             case ast_variable_declaration:
             case ast_return:
             case ast_biop:
+            case ast_alloc:
+            case ast_free:
             case ast_number:
             case ast_word:
             case ast_string:

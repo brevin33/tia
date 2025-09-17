@@ -37,7 +37,7 @@ void function_llvm_prototype_instance(Function_Instance* function_instance);
 
 void function_llvm_implement_instance(Function_Instance* function_instance);
 
-Function_Instance* function_find(Expression_List* parameters, char* name, Ast* ast, bool log_error);
+Function_Instance* function_find(Expression_List* parameters_exprs, const char* name, Ast* ast, bool log_error);
 
 Type* function_get_parameter_type(Function_Instance* function, u64 index);
 

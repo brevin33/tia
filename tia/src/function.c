@@ -113,6 +113,24 @@ Function* function_new(Ast* ast) {
         function_instance.template_to_type = template_to_type;
         function_instance_list_add(&function->instances, &function_instance);
     }
+
+    if (strcmp(function->name, "alloc") == 0) {
+        if (function->parameters.count != 2) {
+            log_error_ast(ast, "alloc function must have two parameters");
+        }
+        Type* arg1_type = &function->parameters.data[0].type;
+        Type_Type arg1_type_type = type_get_type(arg1_type);
+        if (arg1_type_type != type_ref) {
+            log_error_ast(ast, "alloc first parameter must be a reference");
+        }
+
+        Type* arg2_type = &function->parameters.data[1].type;
+        Type_Type arg2_type_type = type_get_type(arg2_type);
+        if (arg2_type_type != type_compile_time_type) {
+            log_error_ast(ast, "alloc second parameter must be a compile time type");
+        }
+    }
+
     return function;
 }
 
@@ -225,7 +243,7 @@ void function_llvm_implement_instance(Function_Instance* function) {
     }
 }
 
-Function_Instance* function_find(Expression_List* parameters_exprs, char* name, Ast* ast, bool log_error) {
+Function_Instance* function_find(Expression_List* parameters_exprs, const char* name, Ast* ast, bool log_error) {
     Type_List parameters_val = type_list_create(parameters_exprs->count);
     Type_List* parameters = &parameters_val;
     for (u64 i = 0; i < parameters_exprs->count; i++) {
@@ -440,11 +458,11 @@ Function_Instance* function_find(Expression_List* parameters_exprs, char* name, 
         }
     }
     if (function_instance == NULL) {
-        Function_Instance function_instance = {0};
-        function_instance.function = function;
-        function_instance.template_to_type = template_to_type;
+        Function_Instance new_function_instance = {0};
+        new_function_instance.function = function;
+        new_function_instance.template_to_type = template_to_type;
         u64 prev_error_count = context.numberOfErrors;
-        Function_Instance* added = function_instance_list_add(&function->instances, &function_instance);
+        Function_Instance* added = function_instance_list_add(&function->instances, &new_function_instance);
         function_prototype_instance(added);
         function_implement(added);
         u64 new_error_count = context.numberOfErrors;
@@ -452,7 +470,15 @@ Function_Instance* function_find(Expression_List* parameters_exprs, char* name, 
             log_error_ast(ast, "Failed to template function");
             log_error_ast(function->ast, "The function that could not be templated");
         }
-        return added;
+        function_instance = added;
+    }
+
+    for (u64 i = 0; i < parameters_exprs->count; i++) {
+        Expression* argument = expression_list_get(parameters_exprs, i);
+        Type* parameter_type = &function_instance->type.base->function.parameters.data[i];
+        Expression argument_cast = expression_implicitly_cast(argument, parameter_type);
+        massert(argument_cast.expr_type != et_invalid, "should never happen");
+        *argument = argument_cast;
     }
     return function_instance;
 }

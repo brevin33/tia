@@ -597,6 +597,45 @@ void type_add_mapping(Template_To_Type* template_to_type, const char* name, Type
     template_map_list_add(&template_to_type->templates, &template_map);
 }
 
+void type_set_allocator(Type* type, Expression* allocator) {
+    u64 last_modifier_index = type->modifiers.count - 1;
+    massert(last_modifier_index != (u64)0 - (u64)1, "type has no modifiers");
+    Type_Modifier* last_modifier = type_modifier_list_get(&type->modifiers, last_modifier_index);
+    last_modifier->allocator = allocator;
+}
+
+void type_set_allocators(Type* type, Type* type_with_allocators) {
+    massert(type_is_equal_without_allocator(type, type_with_allocators), "type is not equal to type_with_allocators");
+    Type_Type type_type = type_get_type(type);
+    switch (type_type) {
+        case type_struct: {
+            for (u64 i = 0; i < type->base->struct_.fields.count; i++) {
+                Type_Struct_Field* field = type_struct_field_list_get(&type->base->struct_.fields, i);
+                Type_Struct_Field* field_with_allocators = type_struct_field_list_get(&type_with_allocators->base->struct_.fields, i);
+                type_set_allocators(&field->type, &field_with_allocators->type);
+            }
+            return;
+        }
+        case type_ptr:
+        case type_ref: {
+            Expression* allocator_with_allocators = type_get_allocator(type_with_allocators);
+            type_set_allocator(type, allocator_with_allocators);
+            return;
+        }
+        case type_invalid:
+        case type_number_literal:
+        case type_void:
+        case type_compile_time_type:
+        case type_function:
+        case type_multi_value:
+        case type_template:
+        case type_int:
+        case type_uint:
+        case type_float:
+            return;
+    }
+}
+
 bool type_needs_mapped(Template_To_Type* template_to_type, Type* type) {
     Type_Type type_type = type_get_type(type);
     switch (type_type) {
@@ -653,6 +692,68 @@ bool type_needs_mapped(Template_To_Type* template_to_type, Type* type) {
     }
 }
 
+bool _type_should_override_allocators(Type* overriden_type, Type* overriding_type) {
+    if (!type_is_equal_without_allocator(overriden_type, overriding_type)) {
+        // TODO: handel void pointers
+        return false;
+    }
+    switch (type_get_type(overriden_type)) {
+        case type_struct: {
+            for (u64 i = 0; i < overriden_type->base->struct_.fields.count; i++) {
+                Type_Struct_Field* field_overriden = type_struct_field_list_get(&overriden_type->base->struct_.fields, i);
+                Type* field_type_overriden = &field_overriden->type;
+
+                Type_Struct_Field* field_overriding = type_struct_field_list_get(&overriding_type->base->struct_.fields, i);
+                Type* field_type_overriding = &field_overriding->type;
+
+                if (!type_should_override_allocators(field_type_overriden, field_type_overriding)) return false;
+            }
+            return true;
+        }
+        case type_ptr:
+        case type_ref: {
+            Expression* overriden_allocator = type_get_allocator(overriden_type);
+            Expression* overriding_allocator = type_get_allocator(overriding_type);
+            if (overriden_allocator == overriding_allocator) return true;
+            if (overriden_allocator->expr_type == et_unknown_allocator) return true;
+            return false;
+        }
+        case type_invalid:
+        case type_number_literal:
+        case type_void:
+        case type_compile_time_type:
+        case type_function:
+        case type_multi_value:
+        case type_template:
+        case type_int:
+        case type_uint:
+        case type_float:
+            return true;
+    }
+}
+
+bool type_should_override_allocators(Type* overriden_type, Type* overriding_type) {
+    Type_Type overriden_type_type = type_get_type(overriden_type);
+    bool should_override_allocators = _type_should_override_allocators(overriden_type, overriding_type);
+    switch (overriden_type_type) {
+        case type_ptr:
+        case type_ref:
+        case type_struct:
+            return should_override_allocators;
+        case type_invalid:
+        case type_number_literal:
+        case type_void:
+        case type_compile_time_type:
+        case type_function:
+        case type_multi_value:
+        case type_template:
+        case type_int:
+        case type_uint:
+        case type_float:
+            return false;
+    }
+}
+
 Template_To_Type copy_template_to_type(Template_To_Type* template_to_type) {
     Template_To_Type template_to_type_copy = {0};
     for (u64 i = 0; i < template_to_type->templates.count; i++) {
@@ -676,10 +777,11 @@ Type type_copy(Type* type) {
     return type_copy;
 }
 
-Type type_get_ptr(Type* type) {
+Type type_get_ptr(Type* type, Expression* allocator) {
     Type copy = type_copy(type);
     Type_Modifier ptr = {0};
     ptr.type = type_modifier_ptr;
+    ptr.allocator = allocator;
     type_modifier_list_add(&copy.modifiers, &ptr);
     return copy;
 }
@@ -716,13 +818,17 @@ Type type_get_mapped_type(Template_To_Type* template_to_type, Type* type) {
         }
         case type_ptr: {
             Type deref_type = type_deref(type);
+            Type_Modifier* last_modifier = type_modifier_list_get(&deref_type.modifiers, deref_type.modifiers.count - 1);
+            Expression* allocator = last_modifier->allocator;
             Type deref_mapped_type = type_get_mapped_type(template_to_type, &deref_type);
-            return type_get_ptr(&deref_mapped_type);
+            return type_get_ptr(&deref_mapped_type, allocator);
         }
         case type_ref: {
             Type deref_type = type_deref(type);
+            Type_Modifier* last_modifier = type_modifier_list_get(&deref_type.modifiers, deref_type.modifiers.count - 1);
+            Expression* allocator = last_modifier->allocator;
             Type deref_mapped_type = type_get_mapped_type(template_to_type, &deref_type);
-            return type_get_reference(&deref_mapped_type);
+            return type_get_reference(&deref_mapped_type, allocator);
         }
         case type_multi_value: {
             Type_List* types = &type->base->multi_value.types;
@@ -786,10 +892,11 @@ bool type_mapping_equal(Template_To_Type* template_to_type, Template_To_Type* ot
     return true;
 }
 
-Type type_get_reference(Type* type) {
+Type type_get_reference(Type* type, Expression* allocator) {
     Type copy = type_copy(type);
     Type_Modifier ref = {0};
     ref.type = type_modifier_ref;
+    ref.allocator = allocator;
     type_modifier_list_add(&copy.modifiers, &ref);
     return copy;
 }
@@ -819,6 +926,14 @@ Type type_underlying(Type* type) {  // pointer go to underlying value
     }
 }
 
+Expression* type_get_allocator(Type* type) {
+    Type_Type type_type = type_get_type(type);
+    massert(type_type == type_ref || type_type == type_ptr, "type is not type_ref or type_ptr");
+    Type_Modifier* last_modifier = type_modifier_list_get(&type->modifiers, type->modifiers.count - 1);
+    Expression* allocator = last_modifier->allocator;
+    return allocator;
+}
+
 bool type_is_reference_of_type_type(Type* ref, Type_Type of) {
     Type ref_deref = type_deref(ref);
     return type_get_type(&ref_deref) == of;
@@ -841,7 +956,7 @@ bool type_is_reference_of(Type* ref, Type* of) {
     return type_is_equal(&ref_deref, of);
 }
 
-bool type_is_equal(Type* type_a, Type* type_b) {
+bool type_is_equal_without_allocator(Type* type_a, Type* type_b) {
     if (type_a->base != type_b->base) return false;
     if (type_a->modifiers.count != type_b->modifiers.count) return false;
     for (u64 i = 0; i < type_a->modifiers.count; i++) {
@@ -859,6 +974,50 @@ bool type_is_equal(Type* type_a, Type* type_b) {
         }
     }
     return true;
+}
+
+bool type_is_equal(Type* type_a, Type* type_b) {
+    if (!type_is_equal_without_allocator(type_a, type_b)) return false;
+
+    Type_Type type_a_type = type_get_type(type_a);
+    Type_Type type_b_type = type_get_type(type_b);
+    massert(type_a_type == type_b_type, "type_a_type ~= type_b_type");
+
+    switch (type_a_type) {
+        case type_ref:
+        case type_ptr: {
+            Expression* allocator_a = type_get_allocator(type_a);
+            Expression* allocator_b = type_get_allocator(type_b);
+            if (allocator_a != allocator_b) return false;
+            Type underlying_type_a = type_underlying(type_a);
+            Type underlying_type_b = type_underlying(type_b);
+            return type_is_equal(&underlying_type_a, &underlying_type_b);
+        }
+        case type_struct: {
+            Type_Struct* struct_a = &type_a->base->struct_;
+            Type_Struct* struct_b = &type_b->base->struct_;
+            for (u64 i = 0; i < struct_a->fields.count; i++) {
+                Expression* allocator_a = type_get_allocator(type_a);
+                Expression* allocator_b = type_get_allocator(type_b);
+                if (allocator_a != allocator_b) return false;
+                Type* field_a = &type_struct_field_list_get(&struct_a->fields, i)->type;
+                Type* field_b = &type_struct_field_list_get(&struct_b->fields, i)->type;
+                if (!type_is_equal(field_a, field_b)) return false;
+            }
+            return true;
+        }
+        case type_invalid:
+        case type_number_literal:
+        case type_void:
+        case type_compile_time_type:
+        case type_function:
+        case type_multi_value:
+        case type_template:
+        case type_int:
+        case type_uint:
+        case type_float:
+            return true;
+    }
 }
 
 bool type_base_is_invalid(Type_Base* type) {

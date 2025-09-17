@@ -70,7 +70,8 @@ Expression expression_access_struct_field(Expression* expression, u64 member_ind
     Type* field_type = &field->type;
 
     if (expression_type_type == type_ref) {
-        expr.type = type_get_reference(field_type);
+        Expression* allocator = type_get_allocator(expression_type);
+        expr.type = type_get_reference(field_type, allocator);
     } else {
         expr.type = *field_type;
     }
@@ -94,7 +95,8 @@ Expression expression_create_get_ptr(Ast* ast, Scope* scope, Function_Instance* 
     expression.get_ptr.expression = alloc(sizeof(Expression));
     *expression.get_ptr.expression = *value;
     Type underlying_type = type_underlying(&value->type);
-    expression.type = type_get_ptr(&underlying_type);
+    Expression* allocator = type_get_allocator(&value->type);
+    expression.type = type_get_ptr(&underlying_type, allocator);
     return expression;
 }
 
@@ -151,7 +153,8 @@ Expression expression_create_struct_access(Ast* ast, Scope* scope, Function_Inst
 
     Type accessed_type;
     if (value_type_type == type_ref) {
-        accessed_type = type_get_reference(field_type);
+        Expression* allocator = type_get_allocator(value_type);
+        accessed_type = type_get_reference(field_type, allocator);
     } else {
         accessed_type = *field_type;
     }
@@ -215,9 +218,43 @@ Expression expression_create_member_access(Ast* ast, Scope* scope, Function_Inst
 
 Expression expression_create_alloc(Ast* ast, Scope* scope, Function_Instance* in_function) {
     massert(ast->type == ast_alloc, "ast is not ast_alloc");
-    Expression expression = {0};
-    expression.expr_type = et_alloc;
-    expression.ast = ast;
+    Expression expr = {0};
+    Expression* expression = expression_list_add(&scope->alloc_expressions, &expr);
+    expression->expr_type = et_alloc;
+    expression->ast = ast;
+
+    Ast_List* arguments = &ast->alloc.arguments;
+    if (arguments->count != 1) {
+        log_error_ast(ast, "alloc takes one argument");
+        Expression err = {0};
+        return err;
+    }
+
+    Ast* argument_ast = ast_list_get(arguments, 0);
+    Expression argument = expression_create(argument_ast, scope, in_function);
+    if (argument.expr_type == et_invalid) {
+        Expression err = {0};
+        return err;
+    }
+    if (argument.expr_type != et_type) {
+        log_error_ast(ast, "alloc argument must be a type");
+        Expression err = {0};
+        return err;
+    }
+
+    Type* type_to_alloc = &argument.type_info.type;
+
+    expression->type = type_get_ptr(type_to_alloc, expression);
+    expression->alloc.type_argument = alloc(sizeof(Expression));
+    *expression->alloc.type_argument = argument;
+    expression->alloc.function_instance = NULL;
+
+    Expression cast = {0};
+    cast.expr_type = et_cast;
+    cast.ast = ast;
+    cast.type = expression->type;
+    cast.cast.expression = expression;
+    return cast;
 }
 
 Expression expression_create_free(Ast* ast, Scope* scope, Function_Instance* in_function) {
@@ -245,13 +282,6 @@ Expression expression_create_function_call(Ast* ast, Scope* scope, Function_Inst
         return err;
     }
     expression.function_call.function_instance = function_instance;
-    for (u64 i = 0; i < arguments.count; i++) {
-        Expression* argument = expression_list_get(&arguments, i);
-        Type* parameter_type = &function_instance->type.base->function.parameters.data[i];
-        Expression argument_cast = expression_implicitly_cast(argument, parameter_type);
-        massert(argument_cast.expr_type != et_invalid, "should never happen");
-        *argument = argument_cast;
-    }
     expression.function_call.arguments = arguments;
     expression.type = function_instance->type.base->function.return_type;
     return expression;
@@ -264,7 +294,7 @@ Expression expression_variable_access(Variable* variable) {
     expression.variable.variable = variable;
     Type_Type var_type_type = type_get_type(&variable->type);
     if (var_type_type != type_ref) {
-        Type ref_type = type_get_reference(&variable->type);
+        Type ref_type = type_get_reference(&variable->type, expression_get_stack_allocator());
         expression.type = ref_type;
     } else {
         expression.type = variable->type;
@@ -300,7 +330,7 @@ Expression expression_create_variable(Ast* ast, Scope* scope, Function_Instance*
     expression.variable.variable = variable;
     Type_Type var_type_type = type_get_type(&variable->type);
     if (var_type_type != type_ref) {
-        Type ref_type = type_get_reference(&variable->type);
+        Type ref_type = type_get_reference(&variable->type, expression_get_stack_allocator());
         expression.type = ref_type;
     } else {
         expression.type = variable->type;
@@ -391,9 +421,64 @@ Expression expression_cast(Expression* expression, Type* type) {
     return expr;
 }
 
+Expression unknown_allocator = {0};
+Expression* expression_get_unknown_allocator() {
+    if (unknown_allocator.expr_type == et_invalid) {
+        unknown_allocator.expr_type = et_unknown_allocator;
+        unknown_allocator.type = type_get_invalid_type();
+        unknown_allocator.ast = NULL;
+    }
+    return &unknown_allocator;
+}
+
+Expression stack_allocator = {0};
+Expression* expression_get_stack_allocator() {
+    if (stack_allocator.expr_type == et_invalid) {
+        stack_allocator.expr_type = et_stack_allocator;
+        stack_allocator.type = type_get_invalid_type();
+        stack_allocator.ast = NULL;
+    }
+    return &stack_allocator;
+}
+
+void expression_reverse_set_allocators(Expression* expression, Type* allocators) {
+    Type* expression_type = &expression->type;
+    Type_Type expression_type_type = type_get_type(expression_type);
+    massert(expression_type_type == type_ref || expression_type_type == type_ptr || expression_type_type == type_struct, "expression_type_type is not type_ref or type_ptr");
+    switch (expression->expr_type) {
+        case et_variable:
+            Variable* variable = expression->variable.variable;
+            type_set_allocators(&variable->type, allocators);
+            return;
+        case et_get_ptr:
+            massert(false, "not implemented");
+        case et_get_val:
+            massert(false, "not implemented");
+        case et_struct_access:
+            massert(false, "not implemented");
+        case et_cast:
+            massert(false, "not implemented");
+        case et_alloc:
+            massert(false, "not implemented");
+        case et_free:
+            massert(false, "not implemented");
+        case et_type:
+        case et_biop:
+        case et_function_call:
+        case et_multi_expression:
+        case et_get_type_size:
+        case et_number_literal:
+        case et_stack_allocator:
+        case et_invalid:
+        case et_unknown_allocator:
+            massert(false, "should never happen");
+    }
+}
+
 bool expression_can_implicitly_cast_without_deref(Type* expression, Type* type) {
     if (type_is_invalid(expression)) return true;  // do this to not propagate a billion errors from anything causing an invalid type
     if (type_is_invalid(type)) return true;        // do this to not propagate a billion errors from anything causing an invalid type
+
     if (type_is_equal(expression, type)) return true;
 
     Type_Type expression_type_type = type_get_type(expression);
@@ -439,21 +524,21 @@ bool expression_can_implicitly_cast_without_deref(Type* expression, Type* type) 
         }
     }
 
-    if (expression_type_type == type_ptr) {
-        Type expression_type_underlying_type = type_underlying(expression);
-        Type_Type expression_type_underlying_type_type = type_get_type(&expression_type_underlying_type);
-        if (expression_type_underlying_type_type == type_void && type_type == type_ptr) {
-            return true;
-        }
-    }
-
-    if (type_type == type_ptr) {
-        Type type_underlying_type = type_underlying(type);
-        Type_Type type_underlying_type_type = type_get_type(&type_underlying_type);
-        if (type_underlying_type_type == type_void && expression_type_type == type_ptr) {
-            return true;
-        }
-    }
+    // if (expression_type_type == type_ptr) {
+    //     Type expression_type_underlying_type = type_underlying(expression);
+    //     Type_Type expression_type_underlying_type_type = type_get_type(&expression_type_underlying_type);
+    //     if (expression_type_underlying_type_type == type_void && type_type == type_ptr) {
+    //         return true;
+    //     }
+    // }
+    //
+    // if (type_type == type_ptr) {
+    //     Type type_underlying_type = type_underlying(type);
+    //     Type_Type type_underlying_type_type = type_get_type(&type_underlying_type);
+    //     if (type_underlying_type_type == type_void && expression_type_type == type_ptr) {
+    //         return true;
+    //     }
+    // }
 
     return false;
 }
@@ -530,8 +615,35 @@ LLVMValueRef expression_compile_type(Expression* expression, Function_Instance* 
     return NULL;
 }
 
+LLVMValueRef expression_compile_alloc(Expression* expression, Function_Instance* func, Scope* scope) {
+    massert(expression->expr_type == et_alloc, "expression is not et_alloc");
+    // Type* type_to_alloc = &expression->alloc.type_argument->type_info.type;
+
+    Expression* allocator = type_get_allocator(&expression->type);
+    if (allocator == expression) {
+        massert(false, "should never happen");
+    }
+
+    Expression_List args = expression_list_create(2);
+    expression_list_add(&args, allocator);
+    expression_list_add(&args, expression->alloc.type_argument);
+
+    // char* function_name = "alloc";
+    // Function_Instance* function_instance = function_find(&args, function_name, NULL, true);
+    // massert(context.numberOfErrors == 0, "errors in function_find");
+    return NULL;
+}
+
+LLVMValueRef expression_compile_free(Expression* expression, Function_Instance* func, Scope* scope) {
+    massert(false, "not implemented");
+}
+
 LLVMValueRef expression_compile(Expression* expression, Function_Instance* func, Scope* scope) {
     switch (expression->expr_type) {
+        case et_alloc:
+            return expression_compile_alloc(expression, func, scope);
+        case et_free:
+            return expression_compile_free(expression, func, scope);
         case et_type:
             return expression_compile_type(expression, func, scope);
         case et_get_val:
@@ -555,6 +667,8 @@ LLVMValueRef expression_compile(Expression* expression, Function_Instance* func,
             return expression_compile_function_call(expression, func, scope);
         case et_get_type_size:
             return expression_compile_get_type_size(expression, func, scope);
+        case et_stack_allocator:
+        case et_unknown_allocator:
         case et_invalid:
             massert(false, "unexpected expression");
             return NULL;
@@ -625,7 +739,7 @@ LLVMValueRef expression_compile_cast(Expression* expression, Function_Instance* 
     Type from_type = expression->cast.expression->type;
     Type_Type from_type_type = type_get_type(&from_type);
 
-    if (type_is_equal(&from_type, &to_type)) {
+    if (type_is_equal_without_allocator(&from_type, &to_type)) {
         return from_value;
     }
 
@@ -741,10 +855,14 @@ Expression_Number_Literal expression_get_number_literal(Expression* expression) 
         case et_type:
         case et_get_val:
         case et_get_ptr:
+        case et_alloc:
+        case et_free:
         case et_struct_access:
+        case et_unknown_allocator:
         case et_variable:
         case et_multi_expression:
         case et_cast:
+        case et_stack_allocator:
         case et_invalid:
             massert(false, "unexpected expression");
     }

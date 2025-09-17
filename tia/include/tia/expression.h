@@ -21,6 +21,8 @@ typedef enum Expression_Type {
     et_get_type_size,
     et_alloc,
     et_free,
+    et_stack_allocator,
+    et_unknown_allocator,
 } Expression_Type;
 
 typedef struct Expression_Number {
@@ -32,8 +34,8 @@ typedef struct Expression_Number {
 } Expression_Number;
 
 typedef struct Expression_Alloc {
-    Type allocator_type;
-    Expression_List arguments;
+    Expression* type_argument;
+    Function_Instance* function_instance;
 } Expression_Alloc;
 
 typedef struct Expression_Function_Call {
@@ -96,6 +98,7 @@ typedef struct Expression {
         Expression_Type_Info type_info;
         Expression_Function_Call function_call;
         Expression_Get_Type_Size get_type_size;
+        Expression_Alloc alloc;
     };
 } Expression;
 
@@ -131,6 +134,12 @@ Expression expression_create_alloc(Ast* ast, Scope* scope, Function_Instance* in
 
 Expression expression_create_free(Ast* ast, Scope* scope, Function_Instance* in_function);
 
+Expression* expression_get_stack_allocator();
+
+Expression* expression_get_unknown_allocator();
+
+void expression_reverse_set_allocators(Expression* expression, Type* allocators);
+
 bool expression_can_implicitly_cast_without_deref(Type* expression, Type* type);
 
 bool expression_can_implicitly_cast(Type* expression, Type* type);
@@ -165,6 +174,10 @@ LLVMValueRef expression_compile_get_ptr(Expression* expression, Function_Instanc
 
 // multi value is special and actually return a pointer to LLVMValueRef array so we need to cast it.
 LLVMValueRef expression_compile_multi_expression(Expression* expression, Function_Instance* func, Scope* scope);
+
+LLVMValueRef expression_compile_alloc(Expression* expression, Function_Instance* func, Scope* scope);
+
+LLVMValueRef expression_compile_free(Expression* expression, Function_Instance* func, Scope* scope);
 
 typedef struct Expression_Number_Literal {
     bool is_float;
