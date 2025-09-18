@@ -1,4 +1,5 @@
 #include "tia.h"
+#include "tia/expression.h"
 #include "tia/file.h"
 
 #ifdef _MSC_VER
@@ -104,6 +105,31 @@ Folder* folder_new(char* path) {
         file_prototype_functions(file);
     }
 
+    Scope* global_scope = &context.global_scope;
+    Variable* exisiting_global_heap = scope_get_variable(global_scope, "global_heap");
+    if (exisiting_global_heap == NULL) {
+        Variable global_heap = {0};
+        global_heap.name = alloc(strlen("global_heap") + 1);
+        strcpy(global_heap.name, "global_heap");
+        Type_Base* base = type_find_base_type("heap");
+        Type type_find_type = {0};
+        type_find_type.base = base;
+        type_find_type.modifiers = type_modifier_list_create(0);
+        type_find_type.modifiers.count = 0;
+        type_find_type.ast = NULL;
+        global_heap.type = type_find_type;
+        Variable* var_in_global_scope = scope_add_variable(global_scope, &global_heap);
+
+        Expression* allocator = alloc(sizeof(Expression));
+        *allocator = expression_variable_access(var_in_global_scope);
+        global_scope->default_allocator = allocator;
+    }
+
+    for (u64 i = 0; i < folder->files.count; i++) {
+        File* file = file_pointer_list_get_file(&folder->files, i);
+        file_implement_types(file);
+    }
+
     for (u64 i = 0; i < folder->files.count; i++) {
         File* file = file_pointer_list_get_file(&folder->files, i);
         file_add_global_declarations(file, folder->init_function);
@@ -116,7 +142,7 @@ Folder* folder_new(char* path) {
 
     for (u64 i = 0; i < folder->files.count; i++) {
         File* file = file_pointer_list_get_file(&folder->files, i);
-        file_implement(file);
+        file_implement_functions(file);
     }
 
     return folder;

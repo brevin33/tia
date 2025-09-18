@@ -63,6 +63,30 @@ void file_prototype_functions(File* file) {
     }
 }
 
+void file_implement_types(File* file) {
+    for (u64 i = 0; i < file->types.count; i++) {
+        Type_Base* type_base = type_base_pointer_list_get_type_base(&file->types, i);
+        switch (type_base->type) {
+            case type_struct:
+                type_implement_struct(type_base);
+                break;
+            case type_invalid:
+            case type_compile_time_type:
+            case type_ptr:
+            case type_int:
+            case type_float:
+            case type_uint:
+            case type_number_literal:
+            case type_void:
+            case type_function:
+            case type_multi_value:
+            case type_template:
+            case type_ref:
+                break;
+        }
+    }
+}
+
 void file_add_global_declarations(File* file, Function* init_function) {
     Function_Instance* init_function_instance = &init_function->instances.data[0];
     Ast* ast = file->ast;
@@ -118,30 +142,7 @@ void file_check_for_invalid_global_statements(File* file) {
     }
 }
 
-void file_implement(File* file) {
-    for (u64 i = 0; i < file->types.count; i++) {
-        Type_Base* type_base = type_base_pointer_list_get_type_base(&file->types, i);
-        switch (type_base->type) {
-            case type_struct:
-                type_implement_struct(type_base);
-                break;
-            case type_invalid:
-            case type_compile_time_type:
-            case type_ptr:
-            case type_int:
-            case type_float:
-            case type_uint:
-            case type_number_literal:
-            case type_void:
-            case type_function:
-            case type_multi_value:
-            case type_template:
-            case type_ref:
-                massert(false, "should never happen");
-                break;
-        }
-    }
-
+void file_implement_functions(File* file) {
     for (u64 i = 0; i < file->functions.count; i++) {
         Function* function = function_pointer_list_get_function(&file->functions, i);
         for (u64 j = 0; j < function->instances.count; j++) {

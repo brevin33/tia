@@ -31,6 +31,11 @@ Function* function_new_init(Folder* folder) {
     function_instance.template_to_type = template_to_type;
     function_instance.parameters_scope = scope_create(&context.global_scope);
     function_instance.body_scope = scope_create(&function_instance.parameters_scope);
+    for (u64 i = 0; i < function->parameters.count; i++) {
+        Variable* parameter = variable_list_get(&function->parameters, i);
+        Type* parameter_type = &parameter->type;
+        type_list_add(&function_instance.parameter_types, parameter_type);
+    }
 
     Type_List parameter_types = type_list_create(0);
 
@@ -109,6 +114,11 @@ Function* function_new(Ast* ast) {
         function->instances = function_instance_list_create(1);
         Function_Instance function_instance = {0};
         function_instance.function = function;
+        for (u64 i = 0; i < function->parameters.count; i++) {
+            Variable* parameter = variable_list_get(&function->parameters, i);
+            Type* parameter_type = &parameter->type;
+            type_list_add(&function_instance.parameter_types, parameter_type);
+        }
         Template_To_Type template_to_type = {0};
         function_instance.template_to_type = template_to_type;
         function_instance_list_add(&function->instances, &function_instance);
@@ -152,13 +162,7 @@ void function_prototype_instance(Function_Instance* function_instance) {
 
     Type return_type = function->return_type;
     return_type = type_get_mapped_type(&function_instance->template_to_type, &return_type);
-    Type_List parameter_types = type_list_create(function->parameters.count);
-    for (u64 i = 0; i < function->parameters.count; i++) {
-        Variable* variable = variable_list_get(&function->parameters, i);
-        Type parameter_type = variable->type;
-        parameter_type = type_get_mapped_type(&function_instance->template_to_type, &parameter_type);
-        type_list_add(&parameter_types, &parameter_type);
-    }
+    Type_List parameter_types = function_instance->parameter_types;
     function_instance->type = type_get_function_type(&parameter_types, return_type);
 
     for (u64 i = 0; i < function->parameters.count; i++) {
@@ -275,10 +279,10 @@ Function_Instance* function_find(Expression_List* parameters_exprs, const char* 
             Variable* parameter_variable = variable_list_get(&function->parameters, j);
             Type* parameter_type = &parameter_variable->type;
             Type* parameter = type_list_get(parameters, j);
-            if (!type_is_equal(parameter, parameter_type)) {
-                match = false;
-                break;
+            if (type_is_equal(parameter, parameter_type) || type_should_override_allocators(parameter_type, parameter)) {
+                continue;
             }
+            match = false;
         }
         if (match) {
             function_pointer_list_add(&match_functions, function);
@@ -295,7 +299,7 @@ Function_Instance* function_find(Expression_List* parameters_exprs, const char* 
                 Variable* parameter_variable = variable_list_get(&function->parameters, j);
                 Type* parameter_type = &parameter_variable->type;
                 Type* parameter = type_list_get(parameters, j);
-                if (type_is_equal(parameter, parameter_type)) {
+                if (type_is_equal(parameter, parameter_type) || type_should_override_allocators(parameter_type, parameter)) {
                     continue;
                 }
                 Type_Type parameter_type_type = type_get_type(parameter);
@@ -325,6 +329,9 @@ Function_Instance* function_find(Expression_List* parameters_exprs, const char* 
                     Variable* parameter_variable = variable_list_get(&function->parameters, j);
                     Type* parameter_type = &parameter_variable->type;
                     Type* parameter = type_list_get(parameters, j);
+                    if (type_is_equal(parameter, parameter_type) || type_should_override_allocators(parameter_type, parameter)) {
+                        continue;
+                    }
                     bool can_implicit_cast = expression_can_implicitly_cast(parameter, parameter_type);
                     if (!can_implicit_cast) {
                         match = false;
@@ -372,6 +379,9 @@ Function_Instance* function_find(Expression_List* parameters_exprs, const char* 
                             }
                         }
                     } else {
+                        if (type_is_equal(parameter, parameter_type) || type_should_override_allocators(parameter_type, parameter)) {
+                            continue;
+                        }
                         bool can_implicit_cast = expression_can_implicitly_cast(parameter, parameter_type);
                         if (!can_implicit_cast) {
                             match = false;
@@ -448,19 +458,35 @@ Function_Instance* function_find(Expression_List* parameters_exprs, const char* 
     }
     *parameters_exprs = new_parameters_exprs;
 
-    Function_Instance* function_instance = NULL;  //= &function->instances.data[0];
-    for (u64 i = 0; i < function->instances.count; i++) {
-        Function_Instance* instance = &function->instances.data[i];
-        Template_To_Type* instance_template_to_type = &instance->template_to_type;
-        if (type_mapping_equal(instance_template_to_type, &template_to_type)) {
-            function_instance = instance;
-            break;
-        }
+    Function_Instance* function_instance = NULL;
+    // TODO: figure out when not to make a new instance
+    if (function->is_extern_c) {
+        function_instance = &function->instances.data[0];
     }
+
     if (function_instance == NULL) {
         Function_Instance new_function_instance = {0};
         new_function_instance.function = function;
         new_function_instance.template_to_type = template_to_type;
+        Type_List parameter_types = type_list_create(function->parameters.count);
+        for (u64 i = 0; i < function->parameters.count; i++) {
+            Variable* parameter = variable_list_get(&function->parameters, i);
+            Type* parameter_type = &parameter->type;
+
+            Expression* parameter_expr = expression_list_get(parameters_exprs, i);
+            Type* parameter_expr_type = &parameter_expr->type;
+
+            Type type_to_add;
+            if (type_should_override_allocators(parameter_type, parameter_expr_type)) {
+                type_to_add = *parameter_expr_type;
+            } else {
+                type_to_add = *parameter_type;
+            }
+            type_list_add(&parameter_types, &type_to_add);
+        }
+
+        new_function_instance.parameter_types = parameter_types;
+
         u64 prev_error_count = context.numberOfErrors;
         Function_Instance* added = function_instance_list_add(&function->instances, &new_function_instance);
         function_prototype_instance(added);
@@ -480,6 +506,7 @@ Function_Instance* function_find(Expression_List* parameters_exprs, const char* 
         massert(argument_cast.expr_type != et_invalid, "should never happen");
         *argument = argument_cast;
     }
+
     return function_instance;
 }
 

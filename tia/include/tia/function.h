@@ -14,6 +14,7 @@ typedef struct Function_Instance {
     };
     LLVMValueRef function_value;
     Template_To_Type template_to_type;
+    Type_List parameter_types;
 } Function_Instance;
 
 typedef struct Function {
@@ -32,6 +33,8 @@ Function* function_new_init(Folder* folder);
 void function_implement(Function_Instance* function);
 
 void function_prototype_instance(Function_Instance* function_instance);
+
+void function_setup_instance_from_function(Function_Instance* function_instance);
 
 void function_llvm_prototype_instance(Function_Instance* function_instance);
 

@@ -21,11 +21,13 @@ void file_prototype_types(File* file);
 
 void file_prototype_functions(File* file);
 
+void file_implement_types(File* file);
+
 void file_add_global_declarations(File* file, Function* init_function);
 
 void file_check_for_invalid_global_statements(File* file);
 
-void file_implement(File* file);
+void file_implement_functions(File* file);
 
 char* file_get_line(File* file, u64 line_number);
 

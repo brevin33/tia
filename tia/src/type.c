@@ -997,9 +997,6 @@ bool type_is_equal(Type* type_a, Type* type_b) {
             Type_Struct* struct_a = &type_a->base->struct_;
             Type_Struct* struct_b = &type_b->base->struct_;
             for (u64 i = 0; i < struct_a->fields.count; i++) {
-                Expression* allocator_a = type_get_allocator(type_a);
-                Expression* allocator_b = type_get_allocator(type_b);
-                if (allocator_a != allocator_b) return false;
                 Type* field_a = &type_struct_field_list_get(&struct_a->fields, i)->type;
                 Type* field_b = &type_struct_field_list_get(&struct_b->fields, i)->type;
                 if (!type_is_equal(field_a, field_b)) return false;
